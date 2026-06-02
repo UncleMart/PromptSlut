@@ -6,12 +6,24 @@ This project focuses on keeping everything local, private, and running directly 
 
 We are currently at v0.8, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
+---
+
+## Screenshots
+
+### Desktop Client GUI
+<img src="PromptSlutGUI.png" width="700" alt="Desktop GUI Client Screenshot">
+
+### Mobile Phone Client GUI (Promptslutette)
+<img src="PromptSlutette.png" width="300" alt="Mobile Android Client Screenshot">
+
+---
+
 ### Net Search and Serper Key Configuration
 To enable the built-in search tool so the model can browse the internet for real-time information, a free Serper API key is required.
-1. Sign up for a free account at [serper.dev/signup](https://serper.dev/signup).
-2. Click **API Keys** on the left menu.
-3. Press **Create new key** in the top right.
-4. Copy the key and paste it directly into the Serper field in the PromptSlut settings.
+1. Go to the [Serper Signup Page](https://serper.dev/signup) to create a free account.
+2. Click **API Keys** on the left sidebar menu.
+3. Click **Create new key** in the top right corner.
+4. Copy the generated key, open the PromptSlut desktop settings panel (⚙️), and paste it directly into the Serper field.
 
 ---
 
