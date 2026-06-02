@@ -6,6 +6,13 @@ This project focuses on keeping everything local, private, and running directly 
 
 We are currently at v0.8, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
+### Net Search and Serper Key Configuration
+To enable the built-in search tool so the model can browse the internet for real-time information, a free Serper API key is required.
+1. Sign up for a free account at [serper.dev/signup](https://serper.dev/signup).
+2. Click **API Keys** on the left menu.
+3. Press **Create new key** in the top right.
+4. Copy the key and paste it directly into the Serper field in the PromptSlut settings.
+
 ---
 
 ## Key Core Features

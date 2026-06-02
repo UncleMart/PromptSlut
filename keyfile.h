@@ -169,7 +169,7 @@ inline bool save_profile_memory(const std::string& profile_text)
     std::ofstream f(exe_path, std::ios::binary);
     if (!f.is_open())
         return false;
-    f << xor_encode(profile_text);
+    f << profile_text;
     return true;
 }
 
@@ -182,7 +182,7 @@ inline bool load_profile_memory(std::string& out_profile_text)
         return false;
     }
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    out_profile_text = xor_decode(content);
+    out_profile_text = content;
     return true;
 }
 
