@@ -1,0 +1,17 @@
+{
+    "engine": "gguf",
+    "gguf": {
+        "tts_server_path": "./tts-server",
+        "tts_model_path": "./models/Kokoro_espeak_Q8_0.gguf",
+        "tts_port": 8081,
+        "tts_threads": 4,
+        "stt_server_path": "./whisper-server",
+        "stt_model_path": "./models/whisper-small-q8_0.gguf",
+        "stt_port": 8082,
+        "stt_threads": 4
+    },
+    "python": {
+        "tts_model_dir": "./models",
+        "stt_model_name": "small"
+    }
+}

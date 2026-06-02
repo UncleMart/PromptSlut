@@ -1,0 +1,68 @@
+# ==========================================
+# C++ / CMake / Ninja / MSYS2 Ignored Files
+# ==========================================
+build/
+bin/
+out/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.pdb
+*.suo
+*.user
+.vs/
+.vscode/
+CMakeSettings.json
+CMakeUserPresets.json
+
+# ==========================================
+# Python Ignored Files
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ==========================================
+# Audio Caches & Dynamic Server Output Logs
+# ==========================================
+audio_cache/
+*.log
+voice_server_stdout.log
+voice_server_stderr.log
+voice_server.pid
+voice_debug.log
+
+# ==========================================
+# User Settings & Decryption Keys
+# ==========================================
+*.profile
+*.key
+
+# ==========================================
+# Android Gradle & Android Studio Ignored Files
+# ==========================================
+.gradle/
+**/build/
+LlamaServerApp/.gradle/
+LlamaServerApp/build/
+LlamaServerApp/app/build/
+LlamaServerApp/local.properties
+.idea/
+*.iml
+.DS_Store
+
+# ==========================================
+# Exclude Large Online-Downloadable Models
+# ==========================================
+models/voices-v1.1-zh.bin
+models/kokoro-v1.1-zh.onnx
+models/ggml-tiny.bin
