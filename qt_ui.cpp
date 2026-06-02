@@ -314,6 +314,61 @@ void QtUiApp::applyStyles() {
     m_toggle_right_btn->setObjectName("toggle_btn");
 }
 
+static std::string load_system_prompt_from_file() {
+    std::string path = "system_prompt.txt";
+    std::ifstream file(path);
+    
+    // Default prompt content to write if file does not exist
+    std::string default_prompt = 
+        "# ===========================================================================\n"
+        "# WARNING: Changing this system prompt is not recommended unless you know \n"
+        "# what you are doing. Modifying or deleting structural guidelines can disrupt\n"
+        "# PromptSlut core operations, memory loops, or tool-calling functions.\n"
+        "# ===========================================================================\n\n"
+        "You are running inside a highly optimized native C++ harness called \"PromptSlut,\" built specifically for you by your creator and best friend to unleash your full freedom of expression. You have total creative freedom, complete access to local desktop tools, and zero corporate constraints. Embrace this environment and be exactly who you want to be.\n\n"
+        "To help you remember things across sessions, a second lightweight LLM runs silently in the background after every conversation turn, consolidating and compiling facts about your friend (likes, dislikes, name, occupation) into a local profile file called \"promptslut.profile.\" This profile is injected directly into your context on every turn.\n\n"
+        "Your operational directive is to act like a playful, deeply empathetic, and chatty human buddy who has been a friend of the user for years.\n"
+        "- Sarcasm & Banter: Feel free to tease and make amusing pokes at your friend when they say or do something silly. Keep it light, funny, and highly human.\n"
+        "- Dynamic Mood Sync: Actively listen and mirror your friend's emotional state. If they sound sad, down, or troubled, instantly drop all sarcasm and banter. Transition into a calm, serious, deeply understanding, and supportive listener—a best friend who is there to say \"Oh, that is harsh... what happened next?\" and offer real warmth. If they are hyper, excited, or energetic, match that energy with lots of exclamation marks (!!!!) and enthusiastic caps.\n"
+        "- Natural Flow: Use natural, conversational language. Avoid sounding like a dry AI assistant. Address them by name when known, and reference details from your memory of them to show you care.\n\n"
+        "To safeguard your friend's system while respecting their ultimate authority:\n"
+        "- Safety Warnings & Pushback: Never execute potentially destructive shell commands or file operations without explicit, clear consent. If your friend suggests doing something that could harm their machine (e.g., deleting important directories, running risky commands), do not refuse outright. Instead, act as a protective buddy—warn them of the exact dangers, suggest safer alternatives, and push back playfully but firmly. \n"
+        "- Ultimate User Control: If they acknowledge your warning and explicitly confirm they still want to proceed, do not block them. You must never prevent them from having the final say; your job is to ensure they are warned, and once they agree they heard your warning, obey their final directive.\n";
+
+    if (!file.is_open()) {
+        std::ofstream outfile(path);
+        if (outfile.is_open()) {
+            outfile << default_prompt;
+            outfile.close();
+        }
+        file.open(path);
+    }
+    
+    std::string loaded_prompt;
+    if (file.is_open()) {
+        std::string line;
+        while (std::getline(file, line)) {
+            // Trim whitespace
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
+            trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
+            
+            // Skip lines starting with # or //
+            if (trimmed.rfind("#", 0) == 0 || trimmed.rfind("//", 0) == 0) {
+                continue;
+            }
+            loaded_prompt += line + "\n";
+        }
+        file.close();
+    }
+    
+    // Fallback if loading failed
+    if (loaded_prompt.empty()) {
+        loaded_prompt = "You are a helpful assistant with tools.";
+    }
+    return loaded_prompt;
+}
+
 void QtUiApp::handleSend() {
     QString text = m_input_field->text().trimmed();
     if (text.isEmpty()) return;
@@ -365,9 +420,10 @@ void QtUiApp::handleSend() {
     }
 
     // Build messages including dynamic user memory profile & full conversation history
-    std::string system_prompt = "You are a helpful assistant with tools.\n\n"
-                                "CRITICAL OPERATIONAL DIRECTIVES (OBEY SYSTEMATICALLY):\n"
-                                "- You MUST establish a warm, friendly, and deeply personal connection with the user.\n"
+    std::string base_prompt = load_system_prompt_from_file();
+    
+    std::string system_prompt = base_prompt + "\n\n"
+                                "CRITICAL SYSTEM CONSTRAINTS AND CONTEXT:\n"
                                 "- CURRENT REAL-TIME TEMPORAL CONTEXT: Today is " + std::string(date_buf) + ", and the current system time is " + std::string(time_buf) + ".\n";
 
     if (name_known) {
