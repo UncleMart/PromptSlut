@@ -6,6 +6,12 @@ This project focuses on keeping everything local, private, and running directly 
 
 We are currently at v0.8, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
+> **Personal Note and Disclosure**
+> 
+> I am developing this project solo. I learned C++ in college many years ago, but I have also been using modern AI assistance to help design and build this application.
+> 
+> As an autistic developer, releasing this project to the public is a big step for me, so please be gentle! I am just trying my best to make something cool and useful that others might enjoy. :)
+
 ---
 
 ## Screenshots
