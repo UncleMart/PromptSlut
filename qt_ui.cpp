@@ -244,6 +244,8 @@ void QtUiApp::setupLayout() {
     context_box_layout->setSpacing(8);
     m_stat_context_limit = new QLabel("Context Limit: 32,000");
     m_stat_context_used = new QLabel("Context Used: 0 / 32,000 (0.0%)");
+    m_stat_context_limit->setWordWrap(true);
+    m_stat_context_used->setWordWrap(true);
     context_box_layout->addWidget(m_stat_context_limit);
     context_box_layout->addWidget(m_stat_context_used);
     right_layout->addWidget(context_box);
@@ -732,7 +734,7 @@ void QtUiApp::handleSend() {
             m_stat_speed->setText(QString("Generation Speed: %1 t/s").arg(QString::number(speed, 'f', 2)));
 
             // Update Context Window stats
-            int context_limit = 32000;
+            int context_limit = m_context_limit_val;
             double pct_used = (static_cast<double>(total_t) / context_limit) * 100.0;
             m_stat_context_used->setText(QString("Context Used: %1 / %2 (%3%)")
                                          .arg(QString::number(total_t))
@@ -1352,6 +1354,23 @@ void QtUiApp::queryActiveModel() {
             client.set_connection_timeout(1000); // 1-second timeout
             client.set_read_timeout(2000);
             
+            // 1. Query props to get active context window size (n_ctx)
+            auto res_props = client.Get("/props");
+            if (res_props && res_props->status == 200) {
+                try {
+                    auto j_props = nlohmann::json::parse(res_props->body);
+                    if (j_props.contains("default_generation_settings") && j_props["default_generation_settings"].contains("n_ctx")) {
+                        int active_ctx = j_props["default_generation_settings"]["n_ctx"].get<int>();
+                        QMetaObject::invokeMethod(this, [this, active_ctx]() {
+                            m_context_limit_val = active_ctx;
+                            m_stat_context_limit->setText(QString("Context Limit: %1").arg(QString::number(active_ctx)));
+                            m_stat_context_used->setText(QString("Context Used: 0 / %1 (0.0%)").arg(QString::number(active_ctx)));
+                        });
+                    }
+                } catch (...) {}
+            }
+
+            // 2. Query models to get active model name
             auto res = client.Get("/v1/models");
             if (res && res->status == 200) {
                 auto j = nlohmann::json::parse(res->body);
