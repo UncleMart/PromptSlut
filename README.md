@@ -1,10 +1,10 @@
-# PromptSlut (v0.81)
+# PromptSlut (v0.811)
 
 PromptSlut is a native, highly optimized C++ and Qt6 frontend designed to connect to any OpenAI-compatible endpoint. It is paired with an integrated local Python voice engine for always-on assistant voice loops and includes an Android companion project (Promptslutette) so you can run a local, lightweight vector model on a spare phone for memory storage and code analysis.
 
 This project focuses on keeping everything local, private, and running directly on your own system. It was designed to run Qwen 3.6 35B A3B as the main desktop model, and Qwen 3.5 0.8B for the mobile phone model, though any OpenAI-compatible API endpoint or local model of your choice can be easily configured.
 
-We are currently at v0.81, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
+We are currently at v0.811, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
 > **Personal Note and Disclosure**
 > 
