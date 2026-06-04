@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <mutex>
 
 static bool matches_spec_w(const wchar_t* filename, const wchar_t* pattern) {
     return PathMatchSpecW(filename, pattern) != FALSE;
@@ -45,27 +46,42 @@ static std::string url_decode(const std::string& str) {
     return result;
 }
 
+static std::filesystem::path g_workspace_dir;
+static std::mutex g_workspace_mutex;
+
+void set_workspace_directory(const std::filesystem::path& path) {
+    std::lock_guard<std::mutex> lock(g_workspace_mutex);
+    g_workspace_dir = path;
+}
+
+std::filesystem::path get_workspace_directory() {
+    std::lock_guard<std::mutex> lock(g_workspace_mutex);
+    if (g_workspace_dir.empty()) {
+        wchar_t exe_path[MAX_PATH];
+        GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+        std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
+
+        while (root_dir.has_parent_path() &&
+               !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
+               !std::filesystem::exists(root_dir / "system_prompt.txt")) {
+            root_dir = root_dir.parent_path();
+        }
+
+        if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
+            g_workspace_dir = root_dir;
+        } else {
+            g_workspace_dir = std::filesystem::current_path();
+        }
+    }
+    return g_workspace_dir;
+}
+
 static std::filesystem::path resolve_path(const std::string& input_path) {
     std::filesystem::path p(utf8_to_utf16(input_path));
     if (p.is_absolute()) {
         return p;
     }
-
-    wchar_t exe_path[MAX_PATH];
-    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
-    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
-
-    while (root_dir.has_parent_path() &&
-           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
-           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        root_dir = root_dir.parent_path();
-    }
-
-    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        return root_dir / p;
-    }
-
-    return std::filesystem::current_path() / p;
+    return get_workspace_directory() / p;
 }
 
 static std::string normalize_newlines(const std::string& str) {
@@ -294,6 +310,13 @@ std::string FileTool::execute(const nlohmann::json& args) {
         bool removed = std::filesystem::remove_all(path, ec) > 0;
         if (ec) return "Error deleting: " + ec.message();
         return removed ? "Success: deleted " + path : "File/directory did not exist: " + path;
+    } else if (op == "set_workspace" || op == "set_cwd") {
+        std::error_code ec;
+        std::string raw_path = args["path"].get<std::string>();
+        std::filesystem::path absolute_ws = std::filesystem::absolute(resolve_path(raw_path), ec);
+        if (ec) return "Error resolving workspace path: " + ec.message();
+        set_workspace_directory(absolute_ws);
+        return "Success: Set working workspace directory to " + absolute_ws.string();
     }
     return "Error: unknown file op: " + op;
 }

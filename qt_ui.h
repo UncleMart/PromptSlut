@@ -223,6 +223,7 @@ private:
     void saveCurrentSessionState();
     void save_all_sessions_to_disk();
     void load_all_sessions_from_disk();
+    void updateWorkspaceLabel();
 
 public:
     struct ChatBlock {
@@ -270,6 +271,9 @@ private:
     QWidget* m_right_pane_container;
     QLabel* m_stat_status;
     QLabel* m_stat_model;
+    QLabel* m_stat_workspace;
+    QLabel* m_stat_context_limit;
+    QLabel* m_stat_context_used;
     QLabel* m_stat_prompt_tokens;
     QLabel* m_stat_completion_tokens;
     QLabel* m_stat_total_tokens;

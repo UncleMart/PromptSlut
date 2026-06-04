@@ -15,14 +15,14 @@ class FileTool : public Tool
 {
 public:
     std::string name() const override { return "file"; }
-    std::string description() const override { return "Read, write, append, copy, move, rename, delete, or list files on the filesystem. Use 'append' to build large files in chunks to avoid errors."; }
+    std::string description() const override { return "Read, write, append, copy, move, rename, delete, set_workspace, set_cwd, or list files on the filesystem. Use 'append' to build large files in chunks to avoid errors."; }
     std::string execute(const json& arguments) override;
     json schema() override {
         return {
             {"type", "object"},
             {"properties", {
-                {"path", {{"type", "string"}, {"description", "Path to the source file or directory"}}},
-                {"op", {{"type", "string"}, {"enum", {"read", "write", "append", "list", "copy", "move", "rename", "delete"}}, {"description", "Operation to perform"}}},
+                {"path", {{"type", "string"}, {"description", "Path to the source file, folder, or target workspace directory"}}},
+                {"op", {{"type", "string"}, {"enum", {"read", "write", "append", "list", "copy", "move", "rename", "delete", "set_workspace", "set_cwd"}}, {"description", "Operation to perform"}}},
                 {"content", {{"type", "string"}, {"description", "Content to write or append (required for write/append)"}}},
                 {"destination", {{"type", "string"}, {"description", "Target path (required for copy/move/rename)"}}}
             }},
@@ -205,6 +205,10 @@ public:
         };
     }
 };
+
+// Workspace directory helpers
+void set_workspace_directory(const std::filesystem::path& path);
+std::filesystem::path get_workspace_directory();
 
 #endif // TOOLS_H
 

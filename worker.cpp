@@ -1,6 +1,7 @@
 #include "worker.h"
 #include "tool_router.h"
 #include "logger.h"
+#include "tools.h"
 #include <mutex>
 #include <chrono>
 #include <iostream>
@@ -28,8 +29,11 @@ static std::string generate_uuid() {
 }
 
 static std::string get_tools_cheat_sheet(const ToolRegistry& registry) {
+    std::string active_ws = get_workspace_directory().string();
     std::string sheet = "\n\n=== LOCAL TOOL SYSTEM ACCESS (MANDATORY INSTRUCTIONS) ===\n"
                         "You are running in a native C++ harness (\"PromptSlut\") with direct access to local desktop tools.\n"
+                        "CURRENT ACTIVE WORKSPACE DIRECTORY: \"" + active_ws + "\"\n"
+                        "To change this workspace directory, you can call the 'file' tool with op='set_workspace' (or set_cwd) and specify the new directory path in 'path'.\n"
                         "To perform tasks like searching, reading/writing files, running commands, or accessing the clipboard, you MUST use these tools.\n\n"
                         "AVAILABLE TOOLS:\n";
     
@@ -243,7 +247,15 @@ void Worker::process_request(const Request& req)
             if (usage.contains("total_tokens") && !usage["total_tokens"].is_null()) {
                 total_t = usage["total_tokens"].get<int>();
             }
-            req.on_stats(elapsed_seconds, prompt_t, completion_t, total_t);
+
+            double gen_time = elapsed_seconds;
+            if (resp.contains("timings") && !resp["timings"].is_null()) {
+                auto& timings = resp["timings"];
+                if (timings.contains("predicted_ms") && !timings["predicted_ms"].is_null()) {
+                    gen_time = timings["predicted_ms"].get<double>() / 1000.0;
+                }
+            }
+            req.on_stats(gen_time, prompt_t, completion_t, total_t);
         }
 
         if (resp.contains("choices") && !resp["choices"].empty())

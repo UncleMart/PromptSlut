@@ -2,6 +2,7 @@
 #include "worker.h"
 #include "keyfile.h"
 #include "voice_engine.h"
+#include "tools.h"
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
@@ -63,6 +64,7 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     m_matrix_widget->setTheme(m_rain_theme_idx);
     queryActiveModel();
     handleVoiceToggle(m_voice_mode_enabled);
+    updateWorkspaceLabel();
 
     // Load existing sessions from disk or start with a fresh one if empty
     load_all_sessions_from_disk();
@@ -214,7 +216,7 @@ void QtUiApp::setupLayout() {
     right_layout->setSpacing(15);
 
     // Section Header 1: Connection Info
-    QLabel* info_hdr = new QLabel("📡 CONNECTION INFO");
+    QLabel* info_hdr = new QLabel("📡 CONNECTION & WORKSPACE");
     info_hdr->setStyleSheet("color: #007acc; font-weight: bold; font-size: 13px;");
     right_layout->addWidget(info_hdr);
 
@@ -224,9 +226,27 @@ void QtUiApp::setupLayout() {
     info_box_layout->setSpacing(8);
     m_stat_status = new QLabel("Endpoint: 127.0.0.1:8080");
     m_stat_model = new QLabel("Active Model: qwen3:latest");
+    m_stat_workspace = new QLabel("Workspace: Loading...");
+    m_stat_workspace->setWordWrap(true);
     info_box_layout->addWidget(m_stat_status);
     info_box_layout->addWidget(m_stat_model);
+    info_box_layout->addWidget(m_stat_workspace);
     right_layout->addWidget(info_box);
+
+    // Section Header 1b: Context Window Stats
+    QLabel* context_hdr = new QLabel("🧠 CONTEXT WINDOW");
+    context_hdr->setStyleSheet("color: #007acc; font-weight: bold; font-size: 13px;");
+    right_layout->addWidget(context_hdr);
+
+    QFrame* context_box = new QFrame();
+    context_box->setObjectName("stat_box");
+    QVBoxLayout* context_box_layout = new QVBoxLayout(context_box);
+    context_box_layout->setSpacing(8);
+    m_stat_context_limit = new QLabel("Context Limit: 32,000");
+    m_stat_context_used = new QLabel("Context Used: 0 / 32,000 (0.0%)");
+    context_box_layout->addWidget(m_stat_context_limit);
+    context_box_layout->addWidget(m_stat_context_used);
+    right_layout->addWidget(context_box);
 
     // Section Header 2: Token Metrics
     QLabel* metrics_hdr = new QLabel("📊 LAST GENERATION STATS");
@@ -635,6 +655,7 @@ void QtUiApp::handleSend() {
             block.collapsed = true; // Tool calls collapsed by default!
             m_chat_history.push_back(block);
             rebuildChatDisplay();
+            updateWorkspaceLabel();
         });
     };
 
@@ -709,6 +730,14 @@ void QtUiApp::handleSend() {
                 speed = static_cast<double>(completion_t) / elapsed;
             }
             m_stat_speed->setText(QString("Generation Speed: %1 t/s").arg(QString::number(speed, 'f', 2)));
+
+            // Update Context Window stats
+            int context_limit = 32000;
+            double pct_used = (static_cast<double>(total_t) / context_limit) * 100.0;
+            m_stat_context_used->setText(QString("Context Used: %1 / %2 (%3%)")
+                                         .arg(QString::number(total_t))
+                                         .arg(QString::number(context_limit))
+                                         .arg(QString::number(pct_used, 'f', 1)));
 
             // Update cumulative session stats
             m_accumulated_prompt_tokens += prompt_t;
@@ -1298,6 +1327,11 @@ void QtUiApp::handleRenameSession(int row) {
         }
         save_all_sessions_to_disk();
     }
+}
+
+void QtUiApp::updateWorkspaceLabel() {
+    std::string ws_path = get_workspace_directory().string();
+    m_stat_workspace->setText(QString("Workspace: %1").arg(QString::fromStdString(ws_path)));
 }
 
 void QtUiApp::updateStatus(const std::string& status) {
