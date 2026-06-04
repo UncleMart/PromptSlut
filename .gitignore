@@ -46,6 +46,7 @@ voice_debug.log
 # ==========================================
 *.profile
 *.key
+sessions/
 
 # ==========================================
 # Android Gradle & Android Studio Ignored Files

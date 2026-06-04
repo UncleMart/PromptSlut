@@ -8,6 +8,57 @@
 #include <deque>
 #include <thread>
 #include <atomic>
+#include <regex>
+#include <random>
+
+// ---------------------------------------------------------------------------
+// Worker helpers
+// ---------------------------------------------------------------------------
+
+static std::string generate_uuid() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    const char* hex = "0123456789abcdef";
+    std::string uuid = "call_";
+    for (int i = 0; i < 16; ++i) {
+        uuid += hex[dis(gen)];
+    }
+    return uuid;
+}
+
+static std::string get_tools_cheat_sheet(const ToolRegistry& registry) {
+    std::string sheet = "\n\n=== LOCAL TOOL SYSTEM ACCESS (MANDATORY INSTRUCTIONS) ===\n"
+                        "You are running in a native C++ harness (\"PromptSlut\") with direct access to local desktop tools.\n"
+                        "To perform tasks like searching, reading/writing files, running commands, or accessing the clipboard, you MUST use these tools.\n\n"
+                        "AVAILABLE TOOLS:\n";
+    
+    for (const auto& tool : registry.all()) {
+        sheet += "- **" + tool->name() + "**: " + tool->description() + "\n";
+        sheet += "  Schema parameters: " + tool->schema().dump() + "\n";
+    }
+
+    sheet += "\nCRITICAL CALLING RULES:\n"
+             "1. Native Tool Calling: If your API/model runner supports native tool calls, output them via native function-calling.\n"
+             "2. Fallback XML Tool Calling: If you want to use a tool, or if native tool-calling is not fully supported or is failing, you can invoke tools by writing explicit XML tags in your main response content. The harness will intercept, execute them, and feed the results back. Use this exact format:\n"
+             "   <tool_call name=\"TOOL_NAME\">\n"
+             "   {\n"
+             "     \"param_name\": \"value\"\n"
+             "   }\n"
+             "   </tool_call>\n"
+             "   For example, to read a file:\n"
+             "   <tool_call name=\"file\">\n"
+             "   {\n"
+             "     \"path\": \"README.md\",\n"
+             "     \"op\": \"read\"\n"
+             "   }\n"
+             "   </tool_call>\n"
+             "3. Sequential Calls: You can call multiple tools in a single turn if needed. Always wait for the tool output before proceeding with your final text response.\n"
+             "4. Path Resolution: You are running on Windows. You can use relative paths (e.g. \"README.md\" or \"src/main.cpp\"); they are automatically resolved relative to the project workspace root. Always use double backslashes \"\\\\\" or forward slashes \"/\" in paths inside your JSON arguments (e.g., \"C:\\\\PromptSlut\\\\README.md\" or \"C:/PromptSlut/README.md\").\n"
+             "5. File Edits: When using the 'edit' tool, the 'old_string' must exist exactly in the file (newlines will be normalized automatically, but indentation and spacing must match). Specify a unique and sufficiently large block to avoid matching multiple locations.\n"
+             "=========================================================\n";
+    return sheet;
+}
 
 // ---------------------------------------------------------------------------
 // Worker implementation
@@ -129,6 +180,20 @@ void Worker::process_request(const Request& req)
 {
     Logger::get().log_message("debug", "process_request start");
     auto messages = req.messages;
+
+    // Inject dynamic tools cheat sheet if tools are included
+    if (!req.tools.empty()) {
+        std::string sheet = get_tools_cheat_sheet(tool_registry_);
+        if (!messages.empty() && messages[0]["role"] == "system") {
+            std::string content = messages[0]["content"].get<std::string>();
+            messages[0]["content"] = content + sheet;
+        } else {
+            nlohmann::json system_msg;
+            system_msg["role"] = "system";
+            system_msg["content"] = sheet;
+            messages.insert(messages.begin(), system_msg);
+        }
+    }
     std::string final_content;
     int max_tool_calls = 20;
     int iteration = 0;
@@ -197,6 +262,64 @@ void Worker::process_request(const Request& req)
                 req.on_reasoning(reasoning);
         }
 
+        }
+
+        // Intercept XML/fallback tool calls from text response before extracting tool calls!
+        if (resp.contains("choices") && !resp["choices"].empty())
+        {
+            auto& msg = resp["choices"][0]["message"];
+            if (msg.contains("content") && msg["content"].is_string())
+            {
+                std::string content = msg["content"].get<std::string>();
+                if (content.find("<tool_call") != std::string::npos) {
+                    std::vector<nlohmann::json> fallback_calls;
+                    std::regex tag_regex("<tool_call\\s+name=\"([^\"]+)\"\\s*>([\\s\\S]*?)</tool_call>");
+                    auto words_begin = std::sregex_iterator(content.begin(), content.end(), tag_regex);
+                    auto words_end = std::sregex_iterator();
+
+                    std::string cleaned_content = content;
+                    size_t offset_adjustment = 0;
+
+                    for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
+                        std::smatch match = *i;
+                        std::string tool_name = match[1].str();
+                        std::string args_str = match[2].str();
+
+                        // Trim args_str
+                        args_str.erase(0, args_str.find_first_not_of(" \t\r\n"));
+                        args_str.erase(args_str.find_last_not_of(" \t\r\n") + 1);
+
+                        nlohmann::json tc;
+                        tc["id"] = generate_uuid();
+                        tc["type"] = "function";
+                        tc["function"]["name"] = tool_name;
+                        
+                        try {
+                            std::string repaired = ToolRouter::repair_json_backslashes(args_str);
+                            tc["function"]["arguments"] = nlohmann::json::parse(repaired);
+                        } catch (...) {
+                            tc["function"]["arguments"] = args_str;
+                        }
+
+                        fallback_calls.push_back(tc);
+
+                        size_t start_pos = match.position() - offset_adjustment;
+                        size_t len = match.length();
+                        cleaned_content.erase(start_pos, len);
+                        offset_adjustment += len;
+                    }
+
+                    if (!fallback_calls.empty()) {
+                        msg["content"] = cleaned_content;
+                        if (!msg.contains("tool_calls") || msg["tool_calls"].is_null()) {
+                            msg["tool_calls"] = nlohmann::json::array();
+                        }
+                        for (auto& tc : fallback_calls) {
+                            msg["tool_calls"].push_back(tc);
+                        }
+                    }
+                }
+            }
         }
 
         Logger::get().log_message("debug", "extracting tool calls...");

@@ -35,6 +35,9 @@ public:
     // Extract tool calls from a response.
     static std::vector<nlohmann::json> extract_tool_calls(const nlohmann::json& response);
 
+    // Repair unescaped backslashes in JSON strings (such as Windows paths)
+    static std::string repair_json_backslashes(const std::string& input);
+
     // Parse arguments — handles the string vs object quirk.
     static nlohmann::json parse_arguments(const nlohmann::json& args_json);
 

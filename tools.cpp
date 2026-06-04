@@ -45,6 +45,83 @@ static std::string url_decode(const std::string& str) {
     return result;
 }
 
+static std::filesystem::path resolve_path(const std::string& input_path) {
+    std::filesystem::path p(utf8_to_utf16(input_path));
+    if (p.is_absolute()) {
+        return p;
+    }
+
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
+
+    while (root_dir.has_parent_path() &&
+           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
+           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        root_dir = root_dir.parent_path();
+    }
+
+    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        return root_dir / p;
+    }
+
+    return std::filesystem::current_path() / p;
+}
+
+static std::string normalize_newlines(const std::string& str) {
+    std::string res;
+    res.reserve(str.size());
+    for (size_t i = 0; i < str.size(); ++i) {
+        if (str[i] == '\r') {
+            if (i + 1 < str.size() && str[i+1] == '\n') {
+                res += '\n';
+                i++;
+            } else {
+                res += '\n';
+            }
+        } else {
+            res += str[i];
+        }
+    }
+    return res;
+}
+
+static std::string truncate_output(const std::string& str, size_t max_len = 30000) {
+    if (str.length() <= max_len) return str;
+    return str.substr(0, max_len) + "\n\n...(truncated " + std::to_string(str.length() - max_len) + " characters for context efficiency)...";
+}
+
+static void prepare_shell_path() {
+    wchar_t path_buf[32767];
+    DWORD len = GetEnvironmentVariableW(L"PATH", path_buf, 32767);
+    if (len > 0) {
+        std::wstring path_str(path_buf, len);
+        
+        std::wstring msys_ucrt = L"C:\\msys64\\ucrt64\\bin";
+        if (!std::filesystem::exists(msys_ucrt)) {
+            msys_ucrt = L"C:\\msys64.bak\\ucrt64\\bin";
+        }
+        
+        std::wstring msys_usr = L"C:\\msys64\\usr\\bin";
+        if (!std::filesystem::exists(msys_usr)) {
+            msys_usr = L"C:\\msys64.bak\\usr\\bin";
+        }
+
+        std::wstring new_path;
+        if (std::filesystem::exists(msys_ucrt)) {
+            new_path += msys_ucrt + L";";
+        }
+        if (std::filesystem::exists(msys_usr)) {
+            new_path += msys_usr + L";";
+        }
+        
+        if (!new_path.empty() && path_str.find(msys_ucrt) == std::wstring::npos) {
+            new_path += path_str;
+            SetEnvironmentVariableW(L"PATH", new_path.c_str());
+        }
+    }
+}
+
 std::vector<std::shared_ptr<Tool>> ToolRegistry::all() const {
     return tools_;
 }
@@ -130,17 +207,22 @@ std::string FileTool::execute(const nlohmann::json& args) {
     }
 
     std::string op = args["op"].get<std::string>();
-    std::string path = args["path"].get<std::string>();
+    std::string path = resolve_path(args["path"].get<std::string>()).string();
 
     if (op == "read") {
         std::ifstream f(path);
         if (!f.is_open()) return "Error: cannot open file for reading: " + path;
         std::stringstream ss;
         ss << f.rdbuf();
-        return ss.str();
+        return truncate_output(ss.str());
     } else if (op == "write") {
         if (!args.contains("content") || !args["content"].is_string()) {
             return "Error: 'content' string parameter is required for write operation.";
+        }
+        std::filesystem::path p(utf8_to_utf16(path));
+        std::error_code ec;
+        if (p.has_parent_path() && !std::filesystem::exists(p.parent_path(), ec)) {
+            std::filesystem::create_directories(p.parent_path(), ec);
         }
         std::ofstream f(path);
         if (!f.is_open()) return "Error: cannot open file for writing: " + path;
@@ -149,6 +231,11 @@ std::string FileTool::execute(const nlohmann::json& args) {
     } else if (op == "append") {
         if (!args.contains("content") || !args["content"].is_string()) {
             return "Error: 'content' string parameter is required for append operation.";
+        }
+        std::filesystem::path p(utf8_to_utf16(path));
+        std::error_code ec;
+        if (p.has_parent_path() && !std::filesystem::exists(p.parent_path(), ec)) {
+            std::filesystem::create_directories(p.parent_path(), ec);
         }
         std::ofstream f(path, std::ios::app);
         if (!f.is_open()) return "Error: cannot open file for appending: " + path;
@@ -166,7 +253,47 @@ std::string FileTool::execute(const nlohmann::json& args) {
             result += "\n";
         }
         if (ec) return "Error listing directory: " + ec.message();
-        return result.empty() ? "Directory is empty." : result;
+        return truncate_output(result.empty() ? "Directory is empty." : result);
+    } else if (op == "copy") {
+        if (!args.contains("destination") || !args["destination"].is_string()) {
+            return "Error: 'destination' string parameter is required for copy operation.";
+        }
+        std::string dest = resolve_path(args["destination"].get<std::string>()).string();
+        std::error_code ec;
+        std::filesystem::path dest_path(utf8_to_utf16(dest));
+        if (dest_path.has_parent_path() && !std::filesystem::exists(dest_path.parent_path(), ec)) {
+            std::filesystem::create_directories(dest_path.parent_path(), ec);
+        }
+        std::filesystem::copy(path, dest, std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive, ec);
+        if (ec) return "Error copying: " + ec.message();
+        return "Success: copied " + path + " to " + dest;
+    } else if (op == "move") {
+        if (!args.contains("destination") || !args["destination"].is_string()) {
+            return "Error: 'destination' string parameter is required for move operation.";
+        }
+        std::string dest = resolve_path(args["destination"].get<std::string>()).string();
+        std::error_code ec;
+        std::filesystem::path dest_path(utf8_to_utf16(dest));
+        if (dest_path.has_parent_path() && !std::filesystem::exists(dest_path.parent_path(), ec)) {
+            std::filesystem::create_directories(dest_path.parent_path(), ec);
+        }
+        std::filesystem::rename(path, dest, ec);
+        if (ec) return "Error moving: " + ec.message();
+        return "Success: moved " + path + " to " + dest;
+    } else if (op == "rename") {
+        if (!args.contains("destination") || !args["destination"].is_string()) {
+            return "Error: 'destination' string parameter is required for rename operation.";
+        }
+        std::string dest = resolve_path(args["destination"].get<std::string>()).string();
+        std::error_code ec;
+        std::filesystem::rename(path, dest, ec);
+        if (ec) return "Error renaming: " + ec.message();
+        return "Success: renamed " + path + " to " + dest;
+    } else if (op == "delete" || op == "remove") {
+        std::error_code ec;
+        bool removed = std::filesystem::remove_all(path, ec) > 0;
+        if (ec) return "Error deleting: " + ec.message();
+        return removed ? "Success: deleted " + path : "File/directory did not exist: " + path;
     }
     return "Error: unknown file op: " + op;
 }
@@ -175,6 +302,8 @@ std::string ShellTool::execute(const nlohmann::json& args) {
     if (!args.contains("cmd") || !args["cmd"].is_string()) {
         return "Error: missing or invalid 'cmd' parameter.";
     }
+
+    prepare_shell_path();
 
     std::string cmd = args["cmd"].get<std::string>();
     std::wstring wcmd = utf8_to_utf16("cmd /c " + cmd);
@@ -228,14 +357,18 @@ std::string ShellTool::execute(const nlohmann::json& args) {
     CloseHandle(pi.hThread);
     CloseHandle(hChildStd_OUT_Rd);
 
-    if (output.empty()) {
-        return "Command completed with exit code: " + std::to_string(exit_code);
+    std::string result = output;
+    if (exit_code != 0) {
+        if (!result.empty() && result.back() != '\n') result += "\n";
+        result += "(Command failed with exit code: " + std::to_string(exit_code) + ")";
+    } else if (result.empty()) {
+        result = "Command completed successfully (exit code: 0).";
     }
-    return output;
+    return truncate_output(result);
 }
 
 std::string DiskSearchTool::execute(const nlohmann::json& args) {
-    std::string path = args.value("path", ".");
+    std::string path = resolve_path(args.value("path", ".")).string();
     std::string pattern = args.value("pattern", "*");
     std::string results;
     std::error_code ec;
@@ -248,17 +381,28 @@ std::string DiskSearchTool::execute(const nlohmann::json& args) {
         auto it = std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied, ec);
         if (ec) return "Error: Failed to open directory: " + ec.message();
         
-        for (const auto& entry : it) {
-            std::error_code entry_ec;
-            if (entry.is_regular_file(entry_ec) && matches_spec_utf8(entry.path().filename().string(), pattern)) {
-                results += entry.path().string() + "\n";
+        while (it != std::filesystem::recursive_directory_iterator()) {
+            try {
+                const auto& entry = *it;
+                std::error_code entry_ec;
+                if (entry.is_regular_file(entry_ec) && matches_spec_utf8(entry.path().filename().string(), pattern)) {
+                    results += entry.path().string() + "\n";
+                }
+            } catch (...) {
+                // Ignore errors reading a single entry
+            }
+            
+            try {
+                ++it;
+            } catch (...) {
+                it.pop();
             }
         }
     } catch (const std::exception& e) {
         return std::string("Error during search: ") + e.what();
     }
 
-    return results.empty() ? "No files found." : results;
+    return truncate_output(results.empty() ? "No files found." : results);
 }
 
 std::string FetchTool::execute(const nlohmann::json& args) {
@@ -347,7 +491,7 @@ std::string ClipboardTool::execute(const nlohmann::json& args) {
 }
 
 std::string GrepTool::execute(const nlohmann::json& args) {
-    std::string path = args.value("path", ".");
+    std::string path = resolve_path(args.value("path", ".")).string();
     std::string pattern_str = args.at("pattern").get<std::string>();
     std::string include = args.value("include", "");
 
@@ -358,27 +502,45 @@ std::string GrepTool::execute(const nlohmann::json& args) {
 
         if (!std::filesystem::exists(path, ec)) return "Error: Path does not exist: " + path;
 
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (!entry.is_regular_file()) continue;
+        auto it = std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied, ec);
+        if (ec) return "Error: Failed to open directory: " + ec.message();
 
-            if (!include.empty()) {
-                std::string filename = entry.path().filename().string();
-                if (!matches_spec_utf8(filename, include)) continue;
+        while (it != std::filesystem::recursive_directory_iterator()) {
+            try {
+                const auto& entry = *it;
+                std::error_code entry_ec;
+                if (entry.is_regular_file(entry_ec)) {
+                    bool matches_filter = true;
+                    if (!include.empty()) {
+                        std::string filename = entry.path().filename().string();
+                        matches_filter = matches_spec_utf8(filename, include);
+                    }
+                    
+                    if (matches_filter) {
+                        std::ifstream f(entry.path());
+                        if (f.is_open()) {
+                            std::string line;
+                            int line_num = 1;
+                            while (std::getline(f, line)) {
+                                if (std::regex_search(line, pattern)) {
+                                    results += entry.path().string() + ":" + std::to_string(line_num) + ": " + line + "\n";
+                                }
+                                line_num++;
+                            }
+                        }
+                    }
+                }
+            } catch (...) {
+                // Ignore error on single entry
             }
 
-            std::ifstream f(entry.path());
-            if (!f.is_open()) continue;
-
-            std::string line;
-            int line_num = 1;
-            while (std::getline(f, line)) {
-                if (std::regex_search(line, pattern)) {
-                    results += entry.path().string() + ":" + std::to_string(line_num) + ": " + line + "\n";
-                }
-                line_num++;
+            try {
+                ++it;
+            } catch (...) {
+                it.pop();
             }
         }
-        return results.empty() ? "No matches found." : results;
+        return truncate_output(results.empty() ? "No matches found." : results);
     } catch (const std::regex_error& e) {
         return "Error: Invalid regex pattern: " + std::string(e.what());
     } catch (const std::exception& e) {
@@ -387,7 +549,7 @@ std::string GrepTool::execute(const nlohmann::json& args) {
 }
 
 std::string EditTool::execute(const nlohmann::json& args) {
-    std::string path = args.at("path").get<std::string>();
+    std::string path = resolve_path(args.at("path").get<std::string>()).string();
     std::string old_str = args.at("old_string").get<std::string>();
     std::string new_str = args.at("new_string").get<std::string>();
     bool replace_all = args.value("replaceAll", false);
@@ -400,22 +562,42 @@ std::string EditTool::execute(const nlohmann::json& args) {
     std::string content((std::istreambuf_iterator<char>(f_in)), std::istreambuf_iterator<char>());
     f_in.close();
 
-    size_t pos = content.find(old_str);
+    bool has_crlf = (content.find("\r\n") != std::string::npos);
+    std::string norm_content = normalize_newlines(content);
+    std::string norm_old_str = normalize_newlines(old_str);
+    std::string norm_new_str = normalize_newlines(new_str);
+
+    size_t pos = norm_content.find(norm_old_str);
     if (pos == std::string::npos) return "Error: old_string not found in file.";
 
     if (replace_all) {
         size_t last_pos = 0;
-        while ((pos = content.find(old_str, last_pos)) != std::string::npos) {
-            content.replace(pos, old_str.length(), new_str);
-            last_pos = pos + new_str.length();
+        while ((pos = norm_content.find(norm_old_str, last_pos)) != std::string::npos) {
+            norm_content.replace(pos, norm_old_str.length(), norm_new_str);
+            last_pos = pos + norm_new_str.length();
         }
     } else {
-        content.replace(pos, old_str.length(), new_str);
+        norm_content.replace(pos, norm_old_str.length(), norm_new_str);
+    }
+
+    // Convert back to original line ending format if it had CRLF
+    std::string final_content;
+    if (has_crlf) {
+        final_content.reserve(norm_content.size() * 11 / 10);
+        for (char c : norm_content) {
+            if (c == '\n') {
+                final_content += "\r\n";
+            } else {
+                final_content += c;
+            }
+        }
+    } else {
+        final_content = norm_content;
     }
 
     std::ofstream f_out(path, std::ios::binary);
     if (!f_out.is_open()) return "Error: cannot open file for writing: " + path;
-    f_out << content;
+    f_out << final_content;
     f_out.close();
 
     return "Success: updated " + path;

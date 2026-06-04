@@ -27,7 +27,7 @@ nlohmann::json HttpForwarder::make_request(
     req["model"] = model;
     req["messages"] = messages;
     req["temperature"] = 0.7;
-    req["max_tokens"] = 8192;
+    req["max_tokens"] = 4096;
 
     if (!tools.empty())
         req["tools"] = tools;

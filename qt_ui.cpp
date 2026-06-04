@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <thread>
+#include <filesystem>
 
 static std::vector<std::string> tokenize(const std::string& text);
 
@@ -63,8 +64,15 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     queryActiveModel();
     handleVoiceToggle(m_voice_mode_enabled);
 
-    // Start with a default chat session
-    handleNewChat();
+    // Load existing sessions from disk or start with a fresh one if empty
+    load_all_sessions_from_disk();
+    if (m_sessions.empty()) {
+        handleNewChat();
+    } else {
+        rebuildSidebar();
+        m_current_session_index = 0;
+        loadSession(0);
+    }
 }
 
 void QtUiApp::setupLayout() {
@@ -146,6 +154,7 @@ void QtUiApp::setupLayout() {
     // Chat History (overlayed on top of matrix background)
     m_chat_display = new QTextBrowser();
     m_chat_display->setReadOnly(true);
+    m_chat_display->setLineWrapMode(QTextEdit::WidgetWidth);
     m_chat_display->setTextInteractionFlags(Qt::TextBrowserInteraction);
     m_chat_display->setStyleSheet("background-color: transparent; border: none; color: #d4d4d4; font-size: 14px; padding: 15px;");
     connect(m_chat_display, &QTextBrowser::anchorClicked, this, &QtUiApp::handleAnchorClicked);
@@ -160,9 +169,12 @@ void QtUiApp::setupLayout() {
     m_toggle_left_btn->setFixedSize(30, 30);
     connect(m_toggle_left_btn, &QPushButton::clicked, this, &QtUiApp::toggleLeftPane);
 
-    m_input_field = new QLineEdit();
+    m_input_field = new QTextEdit();
     m_input_field->setPlaceholderText("Type your prompt here...");
-    connect(m_input_field, &QLineEdit::returnPressed, this, &QtUiApp::handleSend);
+    m_input_field->setFixedHeight(65);
+    m_input_field->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_input_field->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_input_field->installEventFilter(this);
 
 #ifdef PROMPTSLUT_VOICE_MODE
     m_mic_btn = new QPushButton("🎙️");
@@ -314,8 +326,26 @@ void QtUiApp::applyStyles() {
     m_toggle_right_btn->setObjectName("toggle_btn");
 }
 
+static std::string resolve_project_path(const std::string& relative_path) {
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
+
+    while (root_dir.has_parent_path() &&
+           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
+           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        root_dir = root_dir.parent_path();
+    }
+
+    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        return (root_dir / relative_path).string();
+    }
+
+    return (std::filesystem::current_path() / relative_path).string();
+}
+
 static std::string load_system_prompt_from_file() {
-    std::string path = "system_prompt.txt";
+    std::string path = resolve_project_path("system_prompt.txt");
     std::ifstream file(path);
     
     // Default prompt content to write if file does not exist
@@ -370,7 +400,7 @@ static std::string load_system_prompt_from_file() {
 }
 
 void QtUiApp::handleSend() {
-    QString text = m_input_field->text().trimmed();
+    QString text = m_input_field->toPlainText().trimmed();
     if (text.isEmpty()) return;
 
     std::string utf8_text = text.toStdString();
@@ -768,7 +798,7 @@ static QString markdownToHtml(const std::string& text) {
         if (current_line.rfind("```", 0) == 0) {
             if (in_code_block) {
                 // Close code block
-                html += QString("<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace; margin: 8px 0;'>") 
+                html += QString("<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word;'>") 
                      + current_block.toHtmlEscaped() 
                      + QString("</pre>");
                 current_block.clear();
@@ -828,7 +858,7 @@ static QString markdownToHtml(const std::string& text) {
 
     if (in_code_block && !current_block.isEmpty()) {
         // Unclosed code block
-        html += QString("<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace;'>") 
+        html += QString("<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace; white-space: pre-wrap; word-wrap: break-word;'>") 
              + current_block.toHtmlEscaped() 
              + QString("</pre>");
     }
@@ -861,7 +891,7 @@ void QtUiApp::rebuildChatDisplay() {
         auto& msg = m_chat_history[i];
         QString html;
         if (msg.role == "user") {
-            html = QString("<div style='margin-bottom: 15px;'><b style='color: #ce9178;'>You:</b><br/>%1</div>")
+            html = QString("<div style='margin-bottom: 15px; white-space: normal; word-wrap: break-word;'><b style='color: #ce9178;'>You:</b><br/>%1</div>")
                    .arg(markdownToHtml(msg.content));
         } else if (msg.role == "reasoning") {
             if (msg.collapsed) {
@@ -888,14 +918,14 @@ void QtUiApp::rebuildChatDisplay() {
                 html = QString("<div style='margin-bottom: 15px; border-left: 3px solid #007acc; padding-left: 10px; margin-top: 8px; margin-bottom: 8px;'>"
                                "<a href='toggle:%1' style='color: #4fc3f7; text-decoration: none; font-weight: bold; background-color: #2b4c6f; padding: 4px 10px; border-radius: 4px; border: 1px solid #4fc3f7; font-size: 11px;'>"
                                "⚙️ ▼ Tool Call: %2 (Click to Collapse)</a>"
-                               "<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace; margin-top: 8px;'>%3</pre></div>")
+                                "<pre style='background-color: #252526; color: #d4d4d4; padding: 10px; border: 1px solid #404040; border-radius: 4px; font-family: Consolas, monospace; margin-top: 8px; white-space: pre-wrap; word-wrap: break-word;'>%3</pre></div>")
                        .arg(i)
                        .arg(QString::fromStdString(msg.tool_name))
                        .arg(QString::fromStdString(msg.content).toHtmlEscaped());
             }
         } else {
             // Assistant
-            html = QString("<div style='margin-bottom: 15px;'><b style='color: #569cd6;'>Assistant:</b><br/>%1</div>")
+            html = QString("<div style='margin-bottom: 15px; white-space: normal; word-wrap: break-word;'><b style='color: #569cd6;'>Assistant:</b><br/>%1</div>")
                    .arg(markdownToHtml(msg.content));
         }
         m_chat_display->append(html);
@@ -932,6 +962,116 @@ void QtUiApp::streamNextToken() {
         m_streaming_timer->stop();
         saveCurrentSessionState();
         updateStatus("Ready");
+    }
+}
+
+static nlohmann::json chat_block_to_json(const QtUiApp::ChatBlock& block) {
+    nlohmann::json j;
+    j["role"] = block.role;
+    j["content"] = block.content;
+    j["tool_name"] = block.tool_name;
+    j["collapsed"] = block.collapsed;
+    return j;
+}
+
+static QtUiApp::ChatBlock chat_block_from_json(const nlohmann::json& j) {
+    QtUiApp::ChatBlock block;
+    block.role = j.value("role", "");
+    block.content = j.value("content", "");
+    block.tool_name = j.value("tool_name", "");
+    block.collapsed = j.value("collapsed", true);
+    return block;
+}
+
+static nlohmann::json chat_session_to_json(const QtUiApp::ChatSession& session) {
+    nlohmann::json j;
+    j["title"] = session.title;
+    j["chat_history"] = nlohmann::json::array();
+    for (const auto& block : session.chat_history) {
+        j["chat_history"].push_back(chat_block_to_json(block));
+    }
+    j["conversation"] = session.conversation;
+    return j;
+}
+
+static QtUiApp::ChatSession chat_session_from_json(const nlohmann::json& j) {
+    QtUiApp::ChatSession session;
+    session.title = j.value("title", "New Chat");
+    if (j.contains("chat_history") && j["chat_history"].is_array()) {
+        for (const auto& bj : j["chat_history"]) {
+            session.chat_history.push_back(chat_block_from_json(bj));
+        }
+    }
+    if (j.contains("conversation") && j["conversation"].is_array()) {
+        for (const auto& cj : j["conversation"]) {
+            session.conversation.push_back(cj);
+        }
+    }
+    return session;
+}
+
+void QtUiApp::save_all_sessions_to_disk() {
+    std::string sessions_dir = resolve_project_path("sessions");
+    std::error_code ec;
+    if (!std::filesystem::exists(sessions_dir, ec)) {
+        std::filesystem::create_directories(sessions_dir, ec);
+    }
+    
+    // Clean old session files to prevent orphan files when deleting chats
+    for (const auto& entry : std::filesystem::directory_iterator(sessions_dir, ec)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            std::filesystem::remove(entry.path(), ec);
+        }
+    }
+
+    for (size_t i = 0; i < m_sessions.size(); ++i) {
+        std::string file_path = sessions_dir + "/session_" + std::to_string(i) + ".json";
+        std::ofstream file(file_path);
+        if (file.is_open()) {
+            file << chat_session_to_json(m_sessions[i]).dump(4);
+            file.close();
+        }
+    }
+}
+
+void QtUiApp::load_all_sessions_from_disk() {
+    std::string sessions_dir = resolve_project_path("sessions");
+    std::error_code ec;
+    if (!std::filesystem::exists(sessions_dir, ec)) {
+        return;
+    }
+
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(sessions_dir, ec)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            files.push_back(entry.path());
+        }
+    }
+
+    // Sort files by their name to preserve index order (session_0.json, session_1.json, etc.)
+    std::sort(files.begin(), files.end(), [](const std::filesystem::path& a, const std::filesystem::path& b) {
+        std::string a_name = a.stem().string();
+        std::string b_name = b.stem().string();
+        try {
+            int a_idx = std::stoi(a_name.substr(8));
+            int b_idx = std::stoi(b_name.substr(8));
+            return a_idx < b_idx;
+        } catch (...) {
+            return a_name < b_name;
+        }
+    });
+
+    m_sessions.clear();
+    for (const auto& p : files) {
+        std::ifstream file(p);
+        if (file.is_open()) {
+            try {
+                nlohmann::json j;
+                file >> j;
+                m_sessions.push_back(chat_session_from_json(j));
+            } catch (...) {}
+            file.close();
+        }
     }
 }
 
@@ -999,6 +1139,7 @@ void QtUiApp::saveCurrentSessionState() {
             );
         }
     }
+    save_all_sessions_to_disk();
 }
 
 void QtUiApp::handleNewChat() {
@@ -1044,6 +1185,7 @@ void QtUiApp::handleDeleteSession(int row) {
         
         rebuildSidebar();
         loadSession(m_current_session_index);
+        save_all_sessions_to_disk();
     }
 }
 
@@ -1154,6 +1296,7 @@ void QtUiApp::handleRenameSession(int row) {
         if (m_current_session_index == row) {
             m_sidebar->setCurrentRow(m_current_session_index);
         }
+        save_all_sessions_to_disk();
     }
 }
 
@@ -1288,6 +1431,23 @@ void QtUiApp::dragEnterEvent(QDragEnterEvent* event) {
     if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
     }
+}
+
+bool QtUiApp::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_input_field && event->type() == QEvent::KeyPress) {
+        QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+            if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                // Let Shift+Enter insert a newline natively
+                return QMainWindow::eventFilter(obj, event);
+            } else {
+                // Enter without Shift sends the message!
+                handleSend();
+                return true; // Mark event as handled (swallowed)
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
 }
 
 void QtUiApp::dropEvent(QDropEvent* event) {

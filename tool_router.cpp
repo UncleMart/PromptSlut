@@ -81,6 +81,33 @@ std::vector<nlohmann::json> ToolRouter::extract_tool_calls(const nlohmann::json&
     return tool_calls;
 }
 
+std::string ToolRouter::repair_json_backslashes(const std::string& input)
+{
+    std::string result;
+    result.reserve(input.size() * 11 / 10);
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] == '\\') {
+            // Check if it's a valid JSON escape sequence
+            if (i + 1 < input.size()) {
+                char next = input[i + 1];
+                if (next == 'n' || next == 'r' || next == 't' || next == 'b' || next == 'f' || next == '"' || next == '\\' || next == '/' || next == 'u') {
+                    result += '\\';
+                    result += next;
+                    i++;
+                } else {
+                    // Invalid escape sequence (likely a raw path backslash), escape it properly
+                    result += "\\\\";
+                }
+            } else {
+                result += "\\\\";
+            }
+        } else {
+            result += input[i];
+        }
+    }
+    return result;
+}
+
 nlohmann::json ToolRouter::parse_arguments(const nlohmann::json& args_json)
 {
     // The llama-server quirk: arguments may be a string OR an object.
@@ -89,7 +116,8 @@ nlohmann::json ToolRouter::parse_arguments(const nlohmann::json& args_json)
         // Standard serialized JSON string.
         try {
             std::string str = args_json.get<std::string>();
-            nlohmann::json parsed = nlohmann::json::parse(str);
+            std::string repaired = repair_json_backslashes(str);
+            nlohmann::json parsed = nlohmann::json::parse(repaired);
             if (parsed.is_object()) return parsed;
         } catch (...) {}
         return nlohmann::json::object();

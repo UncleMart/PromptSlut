@@ -1,10 +1,10 @@
-# PromptSlut (v0.8)
+# PromptSlut (v0.81)
 
 PromptSlut is a native, highly optimized C++ and Qt6 frontend designed to connect to any OpenAI-compatible endpoint. It is paired with an integrated local Python voice engine for always-on assistant voice loops and includes an Android companion project (Promptslutette) so you can run a local, lightweight vector model on a spare phone for memory storage and code analysis.
 
 This project focuses on keeping everything local, private, and running directly on your own system. It was designed to run Qwen 3.6 35B A3B as the main desktop model, and Qwen 3.5 0.8B for the mobile phone model, though any OpenAI-compatible API endpoint or local model of your choice can be easily configured.
 
-We are currently at v0.8, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
+We are currently at v0.81, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
 > **Personal Note and Disclosure**
 > 
@@ -40,6 +40,15 @@ The voice system features built-in subtractive gating and Acoustic Echo Cancella
 
 ### Dynamic User Profile Memory System
 PromptSlut features an active user memory consolidation system. Between turns, the secondary model runs lightweight profile-extraction prompts to extract permanent personal facts about you (such as your name, preferences, likes, and dislikes). These are merged with your existing memory profile, allowing the assistant to become increasingly friendly, personal, and knowledgeable about you over time.
+
+### Overhauled, Cross-Platform Desktop Tools (New in v0.81)
+The desktop tool calling pipeline has been completely re-engineered to provide OpenCode-level robust task execution:
+- **Resilient Path Resolution**: Relative paths are automatically resolved against the absolute root directory of your workspace, avoiding "file not found" errors regardless of where the app was executed from.
+- **Robust Multi-line Input**: The desktop client features a multiline prompt area with automatic scrollbars, word wrapping, and standard Shift+Enter handling.
+- **Persistent Chat Sessions**: Your chats are automatically saved to your `sessions/` folder and restored cleanly upon launching the application.
+- **Native File Operations**: File copy, move, rename, and delete are handled using native C++ APIs with automatic folder scaffolding, meaning models no longer have to guess Windows shell commands.
+- **Self-Repairing JSON**: Automatically detects and repairs common model path formatting errors (like unescaped backslashes `\`) before parsing.
+- **Exit Code Propagation**: Shell command failure states are reported clearly with exit codes to prevent the model from getting stuck in hallucination loops.
 
 ---
 

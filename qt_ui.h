@@ -214,26 +214,32 @@ private slots:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     void setupLayout();
     void applyStyles();
     void rebuildChatDisplay();
     void saveCurrentSessionState();
+    void save_all_sessions_to_disk();
+    void load_all_sessions_from_disk();
 
+public:
     struct ChatBlock {
         std::string role; // "user", "assistant", "reasoning", "tool"
         std::string content;
         std::string tool_name;
         bool collapsed = true;
     };
-    std::vector<ChatBlock> m_chat_history;
 
     struct ChatSession {
         std::string title;
         std::vector<ChatBlock> chat_history;
         std::vector<nlohmann::json> conversation;
     };
+
+private:
+    std::vector<ChatBlock> m_chat_history;
     std::vector<ChatSession> m_sessions;
     int m_current_session_index = -1;
 
@@ -253,7 +259,7 @@ private:
     QPushButton* m_sidebar_settings_btn;
     QWidget* m_chat_container;
     QTextBrowser* m_chat_display;
-    QLineEdit* m_input_field;
+    QTextEdit* m_input_field;
     QPushButton* m_send_btn;
     QPushButton* m_stop_btn;
     QPushButton* m_mic_btn = nullptr;
