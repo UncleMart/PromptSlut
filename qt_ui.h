@@ -224,6 +224,10 @@ private:
     void save_all_sessions_to_disk();
     void load_all_sessions_from_disk();
     void updateWorkspaceLabel();
+    void triggerContextConsolidationAndTrimming();
+
+private:
+    bool m_is_consolidating = false;
 
 public:
     struct ChatBlock {
@@ -234,7 +238,9 @@ public:
     };
 
     struct ChatSession {
+        std::string id;
         std::string title;
+        std::string memory_digest;
         std::vector<ChatBlock> chat_history;
         std::vector<nlohmann::json> conversation;
     };

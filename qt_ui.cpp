@@ -21,6 +21,7 @@
 #include <filesystem>
 
 static std::vector<std::string> tokenize(const std::string& text);
+static std::string stripThinkBlock(const std::string& text);
 
 QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     : QMainWindow(parent), m_worker(worker) {
@@ -499,6 +500,15 @@ void QtUiApp::handleSend() {
         system_prompt += "\n\n[ATTACHED FILE SUMMARY: " + m_attached_file_name + "]\n" + m_attached_file_summary;
     }
 
+    if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
+        std::string digest = m_sessions[m_current_session_index].memory_digest;
+        if (!digest.empty()) {
+            system_prompt += "\n\n[ARCHIVED CONVERSATION MEMORY DIGEST]\n"
+                             "Below is a high-density consolidated digest of the older conversation history that has been trimmed for context space:\n" + digest + "\n\n"
+                             "- If you ever need the exact raw text or complete details of what was discussed, you can use the 'file' tool with op='read' to read from the archive file: \"sessions/archive_" + m_sessions[m_current_session_index].id + ".md\".\n";
+        }
+    }
+
     std::vector<nlohmann::json> messages;
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
     for (auto& msg : m_conversation) {
@@ -740,6 +750,10 @@ void QtUiApp::handleSend() {
                                          .arg(QString::number(total_t))
                                          .arg(QString::number(context_limit))
                                          .arg(QString::number(pct_used, 'f', 1)));
+
+            if (total_t > context_limit * 0.75) {
+                triggerContextConsolidationAndTrimming();
+            }
 
             // Update cumulative session stats
             m_accumulated_prompt_tokens += prompt_t;
@@ -1016,7 +1030,9 @@ static QtUiApp::ChatBlock chat_block_from_json(const nlohmann::json& j) {
 
 static nlohmann::json chat_session_to_json(const QtUiApp::ChatSession& session) {
     nlohmann::json j;
+    j["id"] = session.id;
     j["title"] = session.title;
+    j["memory_digest"] = session.memory_digest;
     j["chat_history"] = nlohmann::json::array();
     for (const auto& block : session.chat_history) {
         j["chat_history"].push_back(chat_block_to_json(block));
@@ -1027,7 +1043,12 @@ static nlohmann::json chat_session_to_json(const QtUiApp::ChatSession& session) 
 
 static QtUiApp::ChatSession chat_session_from_json(const nlohmann::json& j) {
     QtUiApp::ChatSession session;
+    session.id = j.value("id", "");
+    if (session.id.empty()) {
+        session.id = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    }
     session.title = j.value("title", "New Chat");
+    session.memory_digest = j.value("memory_digest", "");
     if (j.contains("chat_history") && j["chat_history"].is_array()) {
         for (const auto& bj : j["chat_history"]) {
             session.chat_history.push_back(chat_block_from_json(bj));
@@ -1180,6 +1201,7 @@ void QtUiApp::handleNewChat() {
     }
 
     ChatSession session;
+    session.id = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
     session.title = "New Chat " + std::to_string(m_sessions.size() + 1);
     m_sessions.push_back(session);
     m_current_session_index = m_sessions.size() - 1;
@@ -1334,6 +1356,116 @@ void QtUiApp::handleRenameSession(int row) {
 void QtUiApp::updateWorkspaceLabel() {
     std::string ws_path = get_workspace_directory().string();
     m_stat_workspace->setText(QString("Workspace: %1").arg(QString::fromStdString(ws_path)));
+}
+
+void QtUiApp::triggerContextConsolidationAndTrimming() {
+    if (m_is_consolidating) return;
+    if (m_current_session_index < 0 || m_current_session_index >= static_cast<int>(m_sessions.size())) return;
+    if (m_conversation.size() <= 8) return; // Keep at least the last 8 messages in context
+
+    m_is_consolidating = true;
+    updateStatus("Consolidating context...");
+
+    // 1. Partition conversation into Cold Zone (to archive and trim) and Hot Zone (to keep raw)
+    size_t keep_count = 8;
+    size_t cold_count = m_conversation.size() - keep_count;
+
+    std::vector<nlohmann::json> cold_zone;
+    std::vector<nlohmann::json> hot_zone;
+
+    for (size_t i = 0; i < m_conversation.size(); ++i) {
+        if (i < cold_count) {
+            cold_zone.push_back(m_conversation[i]);
+        } else {
+            hot_zone.push_back(m_conversation[i]);
+        }
+    }
+
+    // 2. Format Cold Zone to Markdown for local archiving
+    std::string archive_md;
+    archive_md += "\n\n### [ARCHIVED CONVERSATION BLOCK - " + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + "]\n";
+    for (const auto& msg : cold_zone) {
+        std::string role = msg.value("role", "");
+        archive_md += "**" + role + "**: ";
+        if (msg.contains("content")) {
+            if (msg["content"].is_string()) {
+                archive_md += msg["content"].get<std::string>() + "\n\n";
+            } else {
+                archive_md += msg["content"].dump() + "\n\n";
+            }
+        }
+        if (msg.contains("tool_calls")) {
+            archive_md += "*(Tool Calls: " + msg["tool_calls"].dump() + ")*\n\n";
+        }
+    }
+
+    // 3. Write/append Cold Zone to sessions/archive_<id>.md
+    std::string archive_file = resolve_project_path("sessions/archive_" + m_sessions[m_current_session_index].id + ".md");
+    std::error_code ec;
+    std::filesystem::path parent_dir = std::filesystem::path(archive_file).parent_path();
+    if (!std::filesystem::exists(parent_dir, ec)) {
+        std::filesystem::create_directories(parent_dir, ec);
+    }
+    
+    std::ofstream out(archive_file, std::ios::app);
+    if (out.is_open()) {
+        out << archive_md;
+        out.close();
+    }
+
+    // 4. Build consolidation prompt for secondary model
+    std::string existing_digest = m_sessions[m_current_session_index].memory_digest;
+    std::string summarize_prompt = 
+        "Existing Memory Digest:\n" + (existing_digest.empty() ? "(empty)" : existing_digest) + "\n\n"
+        "New raw turns to compress:\n";
+    
+    for (const auto& msg : cold_zone) {
+        std::string role = msg.value("role", "");
+        summarize_prompt += role + ": " + (msg.contains("content") ? (msg["content"].is_string() ? msg["content"].get<std::string>() : msg["content"].dump()) : "") + "\n";
+    }
+
+    summarize_prompt += "\nTask:\n"
+                        "Merge these new conversational turns into the existing Memory Digest. Compress them into high-density, bulleted facts of what was discussed, what files were edited, and decisions made. Keep the final digest concise, informative, and under 500 words. Do NOT include markdown backticks or extra comments. Return ONLY the new updated Memory Digest itself.";
+
+    std::vector<nlohmann::json> messages;
+    messages.push_back({{"role", "system"}, {"content", "You are a context consolidator. Update and merge new turns into a single high-density, bulleted facts summary. Return ONLY the bullet points."}});
+    messages.push_back({{"role", "user"}, {"content", summarize_prompt}});
+
+    std::string host = m_use_secondary_model ? m_sec_host_val : m_host_val;
+    int port = m_use_secondary_model ? m_sec_port_val : m_port_val;
+    std::string api_key = m_use_secondary_model ? m_sec_apikey_val : m_apikey_val;
+    std::string model = m_use_secondary_model ? m_sec_model_val : m_model_val;
+
+    m_worker->push_request(
+        messages, host, port, api_key, model,
+        [](const std::string&) {}, // ignore intermediate chunks
+        nullptr, nullptr, nullptr, nullptr,
+        [this, hot_zone](const std::vector<nlohmann::json>& updated_messages) {
+            QMetaObject::invokeMethod(this, [this, updated_messages, hot_zone] {
+                if (!updated_messages.empty() && updated_messages.back().contains("content")) {
+                    std::string new_digest = updated_messages.back()["content"].get<std::string>();
+                    new_digest = stripThinkBlock(new_digest);
+                    
+                    // Strip whitespaces
+                    new_digest.erase(0, new_digest.find_first_not_of(" \t\r\n\"'"));
+                    new_digest.erase(new_digest.find_last_not_of(" \t\r\n\"'") + 1);
+
+                    if (!new_digest.empty()) {
+                        m_sessions[m_current_session_index].memory_digest = new_digest;
+                    }
+                }
+
+                // 5. Update m_conversation (Trim Cold Zone!)
+                m_conversation = hot_zone;
+                saveCurrentSessionState();
+                
+                m_is_consolidating = false;
+                updateStatus("Ready");
+            });
+        },
+        nullptr, // on_stats
+        false    // include_tools
+    );
 }
 
 void QtUiApp::updateStatus(const std::string& status) {
