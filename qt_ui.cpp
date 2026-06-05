@@ -529,21 +529,6 @@ void QtUiApp::handleSend() {
         m_pending_image_base64.clear();
         m_pending_image_mime.clear();
         m_pending_image_name.clear();
-    } else if (!m_pending_audio_base64.empty()) {
-        nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
-        nlohmann::json audio_obj = {
-            {"type", "input_audio"},
-            {"input_audio", {
-                {"data", m_pending_audio_base64},
-                {"format", m_pending_audio_format}
-            }}
-        };
-        content_node = nlohmann::json::array({text_obj, audio_obj});
-
-        m_pending_audio_base64.clear();
-        m_pending_audio_mime.clear();
-        m_pending_audio_name.clear();
-        m_pending_audio_format.clear();
     } else {
         content_node = utf8_text;
     }
@@ -1675,16 +1660,68 @@ void QtUiApp::dropEvent(QDropEvent* event) {
                 appendMessage("[🖼️ Attached Image: " + m_pending_image_name + "]", true);
             }
         } else if (ext == "wav" || ext == "mp3") {
-            QFile file(local_path);
-            if (file.open(QIODevice::ReadOnly)) {
-                QByteArray base64_data = file.readAll().toBase64();
-                m_pending_audio_base64 = base64_data.toStdString();
-                m_pending_audio_name = file_name.toStdString();
-                m_pending_audio_mime = "audio/" + ext.toStdString();
-                m_pending_audio_format = ext.toStdString();
+            appendMessage("[🎙️ Transcribing Audio: " + file_name.toStdString() + "... (using local Whisper engine)]", false);
+            updateStatus("Transcribing...");
 
-                appendMessage("[🎙️ Attached Audio: " + m_pending_audio_name + "]", true);
-            }
+            std::string file_path = local_path.toStdString();
+            std::string std_file_name = file_name.toStdString();
+
+            std::thread([this, file_path, std_file_name]() {
+                try {
+                    std::ifstream f(file_path, std::ios::binary);
+                    if (!f.is_open()) {
+                        QMetaObject::invokeMethod(this, [this, std_file_name]() {
+                            appendMessage("[⚠️ Error: Cannot open audio file " + std_file_name + " for transcription]", false);
+                            updateStatus("Ready");
+                        });
+                        return;
+                    }
+                    std::string file_content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                    f.close();
+
+                    httplib::Client client("http://127.0.0.1:5001");
+                    client.set_connection_timeout(2000);
+                    client.set_read_timeout(60000); // 60 seconds limit for long audio files!
+
+                    httplib::UploadFormData item;
+                    item.name = "file";
+                    item.content = file_content;
+                    item.filename = std_file_name;
+                    item.content_type = "application/octet-stream";
+                    httplib::UploadFormDataItems items = { item };
+
+                    auto res = client.Post("/v1/audio/transcriptions", items);
+                    if (res && res->status == 200) {
+                        auto j = nlohmann::json::parse(res->body);
+                        if (j.contains("text")) {
+                            std::string text = j["text"];
+                            QMetaObject::invokeMethod(this, [this, text, std_file_name]() {
+                                QString current_text = m_input_field->toPlainText();
+                                if (!current_text.isEmpty() && !current_text.endsWith(" ")) {
+                                    current_text += " ";
+                                }
+                                m_input_field->setPlainText(current_text + QString::fromStdString(text));
+                                appendMessage("[🎙️ Transcribed Audio: \"" + text + "\"]", false);
+                                updateStatus("Ready");
+                            });
+                            return;
+                        }
+                    }
+
+                    std::string error_msg = res ? "HTTP " + std::to_string(res->status) : "Connection failed (is Voice Mode enabled?)";
+                    QMetaObject::invokeMethod(this, [this, std_file_name, error_msg]() {
+                        appendMessage("[⚠️ Error transcribing " + std_file_name + ": " + error_msg + "]", false);
+                        updateStatus("Ready");
+                    });
+
+                } catch (const std::exception& e) {
+                    std::string error_msg = e.what();
+                    QMetaObject::invokeMethod(this, [this, std_file_name, error_msg]() {
+                        appendMessage("[⚠️ Exception transcribing " + std_file_name + ": " + error_msg + "]", false);
+                        updateStatus("Ready");
+                    });
+                }
+            }).detach();
         } else {
             // 2. Process text-based code/document files
             QFile file(local_path);
