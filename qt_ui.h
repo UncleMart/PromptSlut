@@ -338,6 +338,13 @@ public:
     std::string m_pending_image_mime;
     std::string m_pending_image_base64;
     
+    // Client-side Visual Memory System (Vashdi Perceptual Hashing Pipeline)
+    std::vector<uint64_t> m_vashdi_hashes;
+    bool m_pending_image_is_vashdi = false;
+    void loadVashdiReferenceHashes();
+    static uint64_t computeImagePHash(const QImage& img);
+    static int calculateHammingDistance(uint64_t h1, uint64_t h2);
+    
     // Audio Attachment states (for native multimodal audio understanding!)
     std::string m_pending_audio_name;
     std::string m_pending_audio_mime;

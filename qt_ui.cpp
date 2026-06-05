@@ -56,6 +56,9 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     // Load the XOR-obfuscated user memory profile if available
     load_profile_memory(m_user_profile);
 
+    // Load Vashdi reference hashes for visual memory system
+    loadVashdiReferenceHashes();
+
     setupLayout();
     applyStyles();
 
@@ -525,7 +528,14 @@ void QtUiApp::handleSend() {
     }
 
     nlohmann::json content_node;
-    if (!m_pending_image_base64.empty()) {
+    if (m_pending_image_is_vashdi) {
+        // Automatically inject the system memory match tag to the outbound user prompt!
+        utf8_text = "[SYSTEM MEMORY MATCH: The attached image depicts Marty's daughter, Vashdi.]\n" + utf8_text;
+        content_node = utf8_text;
+
+        m_pending_image_is_vashdi = false;
+        m_pending_image_name.clear();
+    } else if (!m_pending_image_base64.empty()) {
         nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
         nlohmann::json image_obj = {
             {"type", "image_url"},
@@ -1724,15 +1734,79 @@ void QtUiApp::dropEvent(QDropEvent* event) {
 
         // 1. Process dropped Image formats
         if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "webp" || ext == "gif") {
-            QFile file(local_path);
-            if (file.open(QIODevice::ReadOnly)) {
-                QByteArray base64_data = file.readAll().toBase64();
-                m_pending_image_base64 = base64_data.toStdString();
-                m_pending_image_name = file_name.toStdString();
-                m_pending_image_mime = "image/" + (ext == "jpg" ? "jpeg" : ext.toStdString());
+            appendMessage("[📂 Analyzing Image: " + file_name.toStdString() + "...]", false);
+            updateStatus("Analyzing image...");
 
-                appendMessage("[🖼️ Attached Image: " + m_pending_image_name + "]", true);
-            }
+            std::string std_file_path = local_path.toStdString();
+            std::string std_file_name = file_name.toStdString();
+            std::string std_ext = ext.toStdString();
+
+            std::thread([this, std_file_path, std_file_name, std_ext]() {
+                try {
+                    QImage img(QString::fromStdString(std_file_path));
+                    if (img.isNull()) {
+                        QMetaObject::invokeMethod(this, [this, std_file_name]() {
+                            appendMessage("[⚠️ Error loading image " + std_file_name + "]", false);
+                            updateStatus("Ready");
+                        });
+                        return;
+                    }
+
+                    // Compute Perceptual Hash
+                    uint64_t hash = computeImagePHash(img);
+
+                    // Hamming Distance scan
+                    bool is_vashdi = false;
+                    int min_distance = 64;
+                    for (uint64_t ref_hash : m_vashdi_hashes) {
+                        int dist = calculateHammingDistance(hash, ref_hash);
+                        if (dist < min_distance) {
+                            min_distance = dist;
+                        }
+                    }
+
+                    if (min_distance <= 10) {
+                        is_vashdi = true;
+                    }
+
+                    QMetaObject::invokeMethod(this, [this, is_vashdi, std_file_path, std_file_name, std_ext, min_distance]() {
+                        m_pending_image_name = std_file_name;
+                        m_pending_image_is_vashdi = is_vashdi;
+
+                        if (is_vashdi) {
+                            // Match! Bypass Base64 payload!
+                            m_pending_image_base64.clear();
+                            m_pending_image_mime.clear();
+                            appendMessage("[🖼️ Attached Image: " + std_file_name + " (Identified: Marty's daughter, Vashdi - Context Optimized!)]", true);
+                            std::cout << "[Visual Memory] Match Triggered! Distance: " << min_distance << ". Bypassing Base64 payload." << std::endl;
+                        } else {
+                            // No match! Save raw Base64 as normal
+                            QFile file(QString::fromStdString(std_file_path));
+                            if (file.open(QIODevice::ReadOnly)) {
+                                QByteArray base64_data = file.readAll().toBase64();
+                                m_pending_image_base64 = base64_data.toStdString();
+                                m_pending_image_mime = "image/" + (std_ext == "jpg" ? "jpeg" : std_ext);
+                                appendMessage("[🖼️ Attached Image: " + std_file_name + "]", true);
+                            } else {
+                                appendMessage("[⚠️ Error reading image file " + std_file_name + "]", false);
+                            }
+                        }
+                        updateStatus("Ready");
+                    });
+
+                } catch (const std::exception& e) {
+                    std::string err_msg = e.what();
+                    QMetaObject::invokeMethod(this, [this, std_file_name, err_msg]() {
+                        appendMessage("[⚠️ Exception processing image " + std_file_name + ": " + err_msg + "]", false);
+                        updateStatus("Ready");
+                    });
+                } catch (...) {
+                    QMetaObject::invokeMethod(this, [this, std_file_name]() {
+                        appendMessage("[⚠️ Unknown error processing image " + std_file_name + "]", false);
+                        updateStatus("Ready");
+                    });
+                }
+            }).detach();
         } else if (ext == "wav" || ext == "mp3") {
             QFile file(local_path);
             if (file.open(QIODevice::ReadOnly)) {
@@ -1952,4 +2026,70 @@ void QtUiApp::pollHandsfreeBuffer() {
         reply->deleteLater();
         manager->deleteLater();
     });
+}
+
+void QtUiApp::loadVashdiReferenceHashes() {
+    std::string ref_dir_str = resolve_project_path("memory/vashdi");
+    std::filesystem::path ref_dir(ref_dir_str);
+    std::error_code ec;
+    
+    // Create directory if it doesn't exist
+    if (!std::filesystem::exists(ref_dir, ec)) {
+        std::filesystem::create_directories(ref_dir, ec);
+    }
+    
+    m_vashdi_hashes.clear();
+    
+    // Iterate through files in directory
+    for (const auto& entry : std::filesystem::directory_iterator(ref_dir, ec)) {
+        if (entry.is_regular_file()) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") {
+                QImage img(QString::fromStdString(entry.path().string()));
+                if (!img.isNull()) {
+                    uint64_t hash = computeImagePHash(img);
+                    m_vashdi_hashes.push_back(hash);
+                    std::cout << "[Visual Memory] Loaded reference hash: " << std::hex << hash << " for file: " << entry.path().filename().string() << std::endl;
+                }
+            }
+        }
+    }
+}
+
+uint64_t QtUiApp::computeImagePHash(const QImage& img) {
+    if (img.isNull()) return 0;
+    
+    // 1. Resize to 8x8 pixels with FastTransformation
+    QImage small = img.scaled(8, 8, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    
+    // 2. Convert to grayscale and compute average luminance
+    uint64_t total = 0;
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            total += qGray(small.pixel(x, y));
+        }
+    }
+    uchar avg = static_cast<uchar>(total / 64);
+    
+    // 3. Set bits in 64-bit uint64_t
+    uint64_t hash = 0;
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            if (qGray(small.pixel(x, y)) >= avg) {
+                hash |= (1ULL << (y * 8 + x));
+            }
+        }
+    }
+    return hash;
+}
+
+int QtUiApp::calculateHammingDistance(uint64_t h1, uint64_t h2) {
+    uint64_t val = h1 ^ h2;
+    int dist = 0;
+    while (val) {
+        dist++;
+        val &= val - 1;
+    }
+    return dist;
 }
