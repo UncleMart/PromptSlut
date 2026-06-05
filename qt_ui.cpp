@@ -702,7 +702,31 @@ void QtUiApp::handleSend() {
             m_conversation.clear();
             // Skip the system message at index 0
             for (size_t i = 1; i < updated_messages.size(); ++i) {
-                m_conversation.push_back(updated_messages[i]);
+                nlohmann::json msg = updated_messages[i];
+                // Clean/strip massive Base64 multimodal data from past turns to prevent context bloat!
+                if (msg.contains("content") && msg["content"].is_array()) {
+                    nlohmann::json clean_content = nlohmann::json::array();
+                    for (auto& item : msg["content"]) {
+                        std::string type = item.value("type", "");
+                        if (type == "text") {
+                            clean_content.push_back(item);
+                        } else if (type == "image_url") {
+                            nlohmann::json placeholder;
+                            placeholder["type"] = "text";
+                            placeholder["text"] = "[🖼️ Attached Image]";
+                            clean_content.push_back(placeholder);
+                        } else if (type == "input_audio") {
+                            nlohmann::json placeholder;
+                            placeholder["type"] = "text";
+                            placeholder["text"] = "[🎙️ Attached Audio]";
+                            clean_content.push_back(placeholder);
+                        } else {
+                            clean_content.push_back(item);
+                        }
+                    }
+                    msg["content"] = clean_content;
+                }
+                m_conversation.push_back(msg);
             }
             saveCurrentSessionState();
             updateStatus("Ready");
