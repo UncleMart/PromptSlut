@@ -724,26 +724,21 @@ void QtUiApp::handleSend() {
                 nlohmann::json msg = updated_messages[i];
                 // Clean/strip massive Base64 multimodal data from past turns to prevent context bloat!
                 if (msg.contains("content") && msg["content"].is_array()) {
-                    nlohmann::json clean_content = nlohmann::json::array();
+                    std::string plain_text_content;
                     for (auto& item : msg["content"]) {
                         std::string type = item.value("type", "");
                         if (type == "text") {
-                            clean_content.push_back(item);
+                            if (!plain_text_content.empty()) plain_text_content += "\n";
+                            plain_text_content += item.value("text", "");
                         } else if (type == "image_url") {
-                            nlohmann::json placeholder;
-                            placeholder["type"] = "text";
-                            placeholder["text"] = "[🖼️ Attached Image]";
-                            clean_content.push_back(placeholder);
+                            if (!plain_text_content.empty()) plain_text_content += "\n";
+                            plain_text_content += "[🖼️ Attached Image]";
                         } else if (type == "input_audio") {
-                            nlohmann::json placeholder;
-                            placeholder["type"] = "text";
-                            placeholder["text"] = "[🎙️ Attached Audio]";
-                            clean_content.push_back(placeholder);
-                        } else {
-                            clean_content.push_back(item);
+                            if (!plain_text_content.empty()) plain_text_content += "\n";
+                            plain_text_content += "[🎙️ Attached Audio]";
                         }
                     }
-                    msg["content"] = clean_content;
+                    msg["content"] = plain_text_content;
                 }
                 m_conversation.push_back(msg);
             }
