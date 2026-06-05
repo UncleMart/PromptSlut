@@ -473,7 +473,7 @@ void QtUiApp::handleSend() {
     if (!m_user_profile.empty()) {
         std::string lower_profile = m_user_profile;
         std::transform(lower_profile.begin(), lower_profile.end(), lower_profile.begin(), ::tolower);
-        if (lower_profile.find("name:") != std::string::npos) {
+        if (lower_profile.find("name") != std::string::npos) {
             name_known = true;
         }
     }
@@ -1620,12 +1620,13 @@ void QtUiApp::consolidateMemoryProfile(const std::string& user_prompt, const std
         "User: \"" + user_prompt + "\"\n"
         "Assistant: \"" + assistant_reply + "\"\n\n"
         "Task:\n"
-        "Extract any new permanent personal facts about the **User** (the User's name, age, married, likes, dislikes, occupation) from the latest turn. Do NOT extract any facts about the Assistant (yourself). Merge them with the existing user profile, and output the updated bulleted list of facts about the user.\n"
+        "Extract any new permanent personal facts about the **User** (the User's name, age, relationships, family, likes, dislikes, occupation) from the latest turn. Do NOT extract any facts about the Assistant (yourself).\n"
+        "CRITICAL PRESERVATION RULE: You MUST retain and preserve ALL existing facts in the 'Existing Profile Memory' above. NEVER delete, remove, shorten, or overwrite any existing facts. Only ADD new facts if explicitly mentioned in the Latest Conversation Turn. If no new facts, output the existing profile memory exactly unchanged.\n\n"
         "Rules:\n"
         "- Do not extract temporary states, moods, or trivial chat.\n"
-        "- Do not write 'Unknown' or placeholder values.\n"
+        "- Do not write 'Unknown', 'not explicitly stated', 'not mentioned', or placeholder values.\n"
         "- Do not include markdown backticks, intro, or explanation.\n"
-        "- If no new facts, output the existing profile memory exactly unchanged.";
+        "- Output ONLY the clean bulleted list.";
 
     std::vector<nlohmann::json> messages;
     messages.push_back({{"role", "system"}, {"content", "You are a user memory profile compiler. Merge new personal facts about the user (and ONLY the user) into a clean bulleted list. Do NOT compile information about yourself (the Assistant). Output ONLY the list."}});
@@ -1649,6 +1650,27 @@ void QtUiApp::consolidateMemoryProfile(const std::string& user_prompt, const std
                     new_profile.erase(0, new_profile.find_first_not_of(" \t\r\n\"'"));
                     new_profile.erase(new_profile.find_last_not_of(" \t\r\n\"'") + 1);
                     if (!new_profile.empty()) {
+                        // Sanity Check: If the small model generated 'unknown' or 'placeholder' or empty fields,
+                        // do NOT overwrite the hard-won user memory profile!
+                        std::string lower_new = new_profile;
+                        std::transform(lower_new.begin(), lower_new.end(), lower_new.begin(), ::tolower);
+                        if (lower_new.find("unknown") != std::string::npos || 
+                            lower_new.find("placeholder") != std::string::npos ||
+                            lower_new.find("not explicitly") != std::string::npos ||
+                            lower_new.find("not stated") != std::string::npos ||
+                            lower_new.find("not mentioned") != std::string::npos ||
+                            lower_new.find("empty") != std::string::npos) {
+                            // Discard garbage update to preserve existing clean memory profile
+                            return;
+                        }
+
+                        // Failsafe: if the new profile is significantly shorter than the existing one,
+                        // and the existing one has actual content, it is highly likely the model lost/truncated your files!
+                        if (!m_user_profile.empty() && new_profile.length() < m_user_profile.length() * 0.7) {
+                            // Discard suspicious truncation
+                            return;
+                        }
+
                         m_user_profile = new_profile;
                         save_profile_memory(m_user_profile);
                     }

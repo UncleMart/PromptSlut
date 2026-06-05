@@ -163,10 +163,29 @@ inline std::string get_serper_key()
     return ""; // Completely removed fallback hardcoded key!
 }
 
+inline std::filesystem::path get_profile_file_path()
+{
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
+
+    while (root_dir.has_parent_path() &&
+           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
+           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        root_dir = root_dir.parent_path();
+    }
+
+    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
+        return root_dir / "promptslut.profile";
+    }
+
+    return std::filesystem::current_path() / "promptslut.profile";
+}
+
 inline bool save_profile_memory(const std::string& profile_text)
 {
-    std::string exe_path = std::filesystem::current_path().string() + "/promptslut.profile";
-    std::ofstream f(exe_path, std::ios::binary);
+    std::string path = get_profile_file_path().string();
+    std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
         return false;
     f << profile_text;
@@ -175,8 +194,8 @@ inline bool save_profile_memory(const std::string& profile_text)
 
 inline bool load_profile_memory(std::string& out_profile_text)
 {
-    std::string exe_path = std::filesystem::current_path().string() + "/promptslut.profile";
-    std::ifstream f(exe_path, std::ios::binary);
+    std::string path = get_profile_file_path().string();
+    std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) {
         out_profile_text = "";
         return false;
