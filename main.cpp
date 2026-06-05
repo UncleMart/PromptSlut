@@ -21,6 +21,7 @@ int main(int argc, char *argv[]) {
     worker.register_tool(std::make_shared<ClipboardTool>());
     worker.register_tool(std::make_shared<GrepTool>());
     worker.register_tool(std::make_shared<EditTool>());
+    worker.register_tool(std::make_shared<RememberTool>());
 
     ToolRegistry temp_reg;
     temp_reg.register_tool(std::make_shared<FileTool>());
@@ -32,6 +33,7 @@ int main(int argc, char *argv[]) {
     temp_reg.register_tool(std::make_shared<ClipboardTool>());
     temp_reg.register_tool(std::make_shared<GrepTool>());
     temp_reg.register_tool(std::make_shared<EditTool>());
+    temp_reg.register_tool(std::make_shared<RememberTool>());
     worker.set_tool_registry(temp_reg.to_json());
     
     // 2. Launch the Qt Application

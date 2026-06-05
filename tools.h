@@ -206,6 +206,27 @@ public:
     }
 };
 
+// ---------------------------------------------------------------------------
+// RememberTool — save a permanent fact into long-term memory
+// ---------------------------------------------------------------------------
+
+class RememberTool : public Tool
+{
+public:
+    std::string name() const override { return "remember"; }
+    std::string description() const override { return "Save a permanent personal fact about the user (e.g., likes, dislikes, family, name, occupation) into long-term memory so you remember it in future sessions."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"fact", {{"type", "string"}, {"description", "The permanent personal fact about the user to remember."}}}
+            }},
+            {"required", {"fact"}}
+        };
+    }
+};
+
 // Workspace directory helpers
 void set_workspace_directory(const std::filesystem::path& path);
 std::filesystem::path get_workspace_directory();

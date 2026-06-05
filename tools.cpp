@@ -625,3 +625,30 @@ std::string EditTool::execute(const nlohmann::json& args) {
 
     return "Success: updated " + path;
 }
+
+std::string RememberTool::execute(const nlohmann::json& args) {
+    if (!args.contains("fact") || !args["fact"].is_string()) {
+        return "Error: missing 'fact' parameter.";
+    }
+    std::string fact = args["fact"].get<std::string>();
+
+    std::string profile;
+    load_profile_memory(profile);
+
+    // Strip whitespaces & trailing/leading junk from fact
+    fact.erase(0, fact.find_first_not_of(" \t\r\n\"'"));
+    fact.erase(fact.find_last_not_of(" \t\r\n\"'") + 1);
+
+    if (fact.empty()) {
+        return "Error: fact parameter cannot be empty.";
+    }
+
+    if (!profile.empty() && profile.back() != '\n') {
+        profile += "\n";
+    }
+    profile += "- " + fact + "\n";
+
+    save_profile_memory(profile);
+
+    return "Success: Fact successfully saved to permanent long-term memory: \"" + fact + "\"";
+}

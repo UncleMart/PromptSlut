@@ -428,6 +428,9 @@ void QtUiApp::handleSend() {
 
     std::string utf8_text = text.toStdString();
 
+    // Reload user memory profile dynamically from disk on every turn to capture live manual edits
+    load_profile_memory(m_user_profile);
+
     // Check if previous turn's token count exceeded our context limit threshold (75%)
     // Trigger trim synchronously before we construct the prompt!
     if (m_last_total_tokens > m_context_limit_val * 0.75) {
@@ -741,7 +744,8 @@ void QtUiApp::handleSend() {
             // Extract the assistant's reply from the last message to run the memory consolidator in the background
             if (!updated_messages.empty() && updated_messages.back().contains("content")) {
                 std::string assistant_reply = updated_messages.back()["content"].get<std::string>();
-                consolidateMemoryProfile(utf8_text, assistant_reply);
+                // Blind, automatic extraction is disabled in v0.82; memory is now explicitly controlled by Gemma via the 'remember' tool!
+                // consolidateMemoryProfile(utf8_text, assistant_reply);
 
                 // Flush remaining un-spoken text from raw LLM stream
                 std::string content = assistant_reply;
