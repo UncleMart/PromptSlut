@@ -336,6 +336,12 @@ public:
     std::string m_pending_image_name;
     std::string m_pending_image_mime;
     std::string m_pending_image_base64;
+    
+    // Audio Attachment states (for native multimodal audio understanding!)
+    std::string m_pending_audio_name;
+    std::string m_pending_audio_mime;
+    std::string m_pending_audio_base64;
+    std::string m_pending_audio_format;
 
     // User long-term memory profile
     std::string m_user_profile;

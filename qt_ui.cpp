@@ -529,6 +529,21 @@ void QtUiApp::handleSend() {
         m_pending_image_base64.clear();
         m_pending_image_mime.clear();
         m_pending_image_name.clear();
+    } else if (!m_pending_audio_base64.empty()) {
+        nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
+        nlohmann::json audio_obj = {
+            {"type", "input_audio"},
+            {"input_audio", {
+                {"data", m_pending_audio_base64},
+                {"format", m_pending_audio_format}
+            }}
+        };
+        content_node = nlohmann::json::array({text_obj, audio_obj});
+
+        m_pending_audio_base64.clear();
+        m_pending_audio_mime.clear();
+        m_pending_audio_name.clear();
+        m_pending_audio_format.clear();
     } else {
         content_node = utf8_text;
     }
@@ -1658,6 +1673,17 @@ void QtUiApp::dropEvent(QDropEvent* event) {
                 m_pending_image_mime = "image/" + (ext == "jpg" ? "jpeg" : ext.toStdString());
 
                 appendMessage("[🖼️ Attached Image: " + m_pending_image_name + "]", true);
+            }
+        } else if (ext == "wav" || ext == "mp3") {
+            QFile file(local_path);
+            if (file.open(QIODevice::ReadOnly)) {
+                QByteArray base64_data = file.readAll().toBase64();
+                m_pending_audio_base64 = base64_data.toStdString();
+                m_pending_audio_name = file_name.toStdString();
+                m_pending_audio_mime = "audio/" + ext.toStdString();
+                m_pending_audio_format = ext.toStdString();
+
+                appendMessage("[🎙️ Attached Audio: " + m_pending_audio_name + "]", true);
             }
         } else {
             // 2. Process text-based code/document files
