@@ -167,19 +167,8 @@ inline std::filesystem::path get_profile_file_path()
 {
     wchar_t exe_path[MAX_PATH];
     GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
-    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
-
-    while (root_dir.has_parent_path() &&
-           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
-           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        root_dir = root_dir.parent_path();
-    }
-
-    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        return root_dir / "promptslut.profile";
-    }
-
-    return std::filesystem::current_path() / "promptslut.profile";
+    std::filesystem::path exe_dir = std::filesystem::path(exe_path).parent_path();
+    return exe_dir / "promptslut.profile";
 }
 
 inline bool save_profile_memory(const std::string& profile_text)
