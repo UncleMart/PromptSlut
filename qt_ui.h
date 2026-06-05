@@ -291,6 +291,7 @@ private:
     
     // Context Limit variable
     int m_context_limit_val = 32000;
+    int m_last_total_tokens = 0;
     
     // Session Accumulators
     int m_accumulated_prompt_tokens = 0;

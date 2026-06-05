@@ -428,6 +428,12 @@ void QtUiApp::handleSend() {
 
     std::string utf8_text = text.toStdString();
 
+    // Check if previous turn's token count exceeded our context limit threshold (75%)
+    // Trigger trim synchronously before we construct the prompt!
+    if (m_last_total_tokens > m_context_limit_val * 0.75) {
+        triggerContextConsolidationAndTrimming();
+    }
+
     // If we are currently streaming a reply, stop it and flush remaining tokens immediately
     if (m_streaming_timer && m_streaming_timer->isActive()) {
         m_streaming_timer->stop();
@@ -790,9 +796,7 @@ void QtUiApp::handleSend() {
                                          .arg(QString::number(context_limit))
                                          .arg(QString::number(pct_used, 'f', 1)));
 
-            if (total_t > context_limit * 0.75) {
-                triggerContextConsolidationAndTrimming();
-            }
+            m_last_total_tokens = total_t;
 
             // Update cumulative session stats
             m_accumulated_prompt_tokens += prompt_t;
@@ -1455,7 +1459,12 @@ void QtUiApp::triggerContextConsolidationAndTrimming() {
         out.close();
     }
 
-    // 4. Build consolidation prompt for secondary model
+    // 4. Synchronously trim context and reset accumulators to prevent double-trigger
+    m_conversation = hot_zone;
+    m_last_total_tokens = 0;
+    saveCurrentSessionState();
+
+    // 5. Build consolidation prompt for secondary model
     std::string existing_digest = m_sessions[m_current_session_index].memory_digest;
     std::string summarize_prompt = 
         "Existing Memory Digest:\n" + (existing_digest.empty() ? "(empty)" : existing_digest) + "\n\n"
@@ -1482,8 +1491,8 @@ void QtUiApp::triggerContextConsolidationAndTrimming() {
         messages, host, port, api_key, model,
         [](const std::string&) {}, // ignore intermediate chunks
         nullptr, nullptr, nullptr, nullptr,
-        [this, hot_zone](const std::vector<nlohmann::json>& updated_messages) {
-            QMetaObject::invokeMethod(this, [this, updated_messages, hot_zone] {
+        [this](const std::vector<nlohmann::json>& updated_messages) {
+            QMetaObject::invokeMethod(this, [this, updated_messages] {
                 if (!updated_messages.empty() && updated_messages.back().contains("content")) {
                     std::string new_digest = updated_messages.back()["content"].get<std::string>();
                     new_digest = stripThinkBlock(new_digest);
@@ -1494,12 +1503,9 @@ void QtUiApp::triggerContextConsolidationAndTrimming() {
 
                     if (!new_digest.empty()) {
                         m_sessions[m_current_session_index].memory_digest = new_digest;
+                        saveCurrentSessionState();
                     }
                 }
-
-                // 5. Update m_conversation (Trim Cold Zone!)
-                m_conversation = hot_zone;
-                saveCurrentSessionState();
                 
                 m_is_consolidating = false;
                 updateStatus("Ready");
