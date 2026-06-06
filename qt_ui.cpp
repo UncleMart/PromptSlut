@@ -1704,17 +1704,29 @@ void QtUiApp::dragEnterEvent(QDragEnterEvent* event) {
 }
 
 bool QtUiApp::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == m_input_field && event->type() == QEvent::KeyPress) {
-        QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
-            if (keyEvent->modifiers() & Qt::ShiftModifier) {
-                // Let Shift+Enter insert a newline natively
-                return QMainWindow::eventFilter(obj, event);
-            } else {
-                // Enter without Shift sends the message!
-                handleSend();
-                return true; // Mark event as handled (swallowed)
+    if (obj == m_input_field) {
+        if (event->type() == QEvent::KeyPress) {
+            QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+                if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                    // Let Shift+Enter insert a newline natively
+                    return QMainWindow::eventFilter(obj, event);
+                } else {
+                    // Enter without Shift sends the message!
+                    handleSend();
+                    return true; // Mark event as handled (swallowed)
+                }
             }
+        } else if (event->type() == QEvent::DragEnter) {
+            QDragEnterEvent* dragEvent = static_cast<QDragEnterEvent*>(event);
+            if (dragEvent->mimeData()->hasUrls()) {
+                dragEvent->acceptProposedAction();
+                return true;
+            }
+        } else if (event->type() == QEvent::Drop) {
+            QDropEvent* dropEventObj = static_cast<QDropEvent*>(event);
+            dropEvent(dropEventObj);
+            return true;
         }
     }
     return QMainWindow::eventFilter(obj, event);
