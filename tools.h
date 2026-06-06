@@ -227,6 +227,76 @@ public:
     }
 };
 
+// ---------------------------------------------------------------------------
+// ScreenshotTool — capture screenshot of specific monitor or window
+// ---------------------------------------------------------------------------
+
+class ScreenshotTool : public Tool
+{
+public:
+    std::string name() const override { return "screenshot"; }
+    std::string description() const override { return "Capture a screenshot of desktop_1, desktop_2, or a specific open window by matching its title, and automatically attach it as visual context."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"target", {{"type", "string"}, {"description", "Target to capture: 'desktop_1', 'desktop_2', or a specific window title/substring (e.g., 'notepad', 'browser')"}}}
+            }}
+        };
+    }
+};
+
+// ---------------------------------------------------------------------------
+// OSAutomationTool — simulate keyboard and mouse inputs
+// ---------------------------------------------------------------------------
+
+class OSAutomationTool : public Tool
+{
+public:
+    std::string name() const override { return "os_automation"; }
+    std::string description() const override { return "Control mouse movements, clicks, drag-and-drop, direct unicode text typing, focusing specific windows by name, and key combinations (e.g. 'enter', 'ctrl+c', 'ctrl+v', 'tab')."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"action", {{"type", "string"}, {"enum", {"move_mouse", "click_mouse", "drag_mouse", "type_text", "press_key", "focus_window"}}, {"description", "The action to simulate"}}},
+                {"x", {{"type", "integer"}, {"description", "Absolute screen pixel X coordinate"}}},
+                {"y", {{"type", "integer"}, {"description", "Absolute screen pixel Y coordinate"}}},
+                {"end_x", {{"type", "integer"}, {"description", "Absolute screen pixel End X coordinate (for drag_mouse)"}}},
+                {"end_y", {{"type", "integer"}, {"description", "Absolute screen pixel End Y coordinate (for drag_mouse)"}}},
+                {"button", {{"type", "string"}, {"enum", {"left", "right", "middle"}}, {"description", "Mouse button for clicks (default is 'left')"}}},
+                {"text", {{"type", "string"}, {"description", "Raw UTF-8 text string to type directly (for type_text)"}}},
+                {"key", {{"type", "string"}, {"description", "Special key or keyboard combination (e.g. 'enter', 'backspace', 'ctrl+v', 'ctrl+a', 'tab') to press (for press_key)"}}},
+                {"target", {{"type", "string"}, {"description", "Target window title or substring to focus (for focus_window)"}}}
+            }},
+            {"required", {"action"}}
+        };
+    }
+};
+
+// ---------------------------------------------------------------------------
+// RegisterFaceTool — teach the model a face dynamically in real-time
+// ---------------------------------------------------------------------------
+
+class RegisterFaceTool : public Tool
+{
+public:
+    std::string name() const override { return "register_face"; }
+    std::string description() const override { return "Teach the model a new face dynamically. Saves the currently attached/dropped image or screenshot to the memory directory under the specified identity name, and registers it in real-time so it is recognized automatically on all future turns."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"identity", {{"type", "string"}, {"description", "The name of the person or object in the image to register/remember (e.g., 'Marty', 'Alex', 'My Dog')"}}}
+            }},
+            {"required", {"identity"}}
+        };
+    }
+};
+
 // Workspace directory helpers
 void set_workspace_directory(const std::filesystem::path& path);
 std::filesystem::path get_workspace_directory();

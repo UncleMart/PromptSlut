@@ -23,8 +23,11 @@
 static std::vector<std::string> tokenize(const std::string& text);
 static std::string stripThinkBlock(const std::string& text);
 
+QtUiApp* QtUiApp::s_instance = nullptr;
+
 QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     : QMainWindow(parent), m_worker(worker) {
+    s_instance = this;
     
     setWindowTitle("PromptSlut - Production UI");
     setWindowIcon(QIcon(QCoreApplication::applicationDirPath() + "/PromptSlut.png"));
@@ -56,8 +59,8 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     // Load the XOR-obfuscated user memory profile if available
     load_profile_memory(m_user_profile);
 
-    // Load Vashdi reference hashes for visual memory system
-    loadVashdiReferenceHashes();
+    // Load reference hashes for visual memory system
+    loadVisualMemoryReferenceHashes();
 
     setupLayout();
     applyStyles();
@@ -528,12 +531,15 @@ void QtUiApp::handleSend() {
     }
 
     nlohmann::json content_node;
-    if (m_pending_image_is_vashdi) {
+    if (m_pending_image_has_match) {
         // Automatically inject the system memory match tag to the outbound user prompt!
-        utf8_text = "[SYSTEM MEMORY MATCH: The attached image depicts Marty's daughter, Vashdi.]\n" + utf8_text;
+        utf8_text = "[SYSTEM MEMORY MATCH: The attached image depicts " + m_pending_image_match_identity + ".]\n" + utf8_text;
         content_node = utf8_text;
 
-        m_pending_image_is_vashdi = false;
+        m_pending_image_has_match = false;
+        m_pending_image_match_identity.clear();
+        m_pending_image_base64.clear();
+        m_pending_image_mime.clear();
         m_pending_image_name.clear();
     } else if (!m_pending_image_base64.empty()) {
         nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
@@ -1749,31 +1755,43 @@ void QtUiApp::dropEvent(QDropEvent* event) {
 
                     // Compute Perceptual Hash
                     uint64_t hash = computeImagePHash(img);
+                    if (hash == 0) {
+                        QMetaObject::invokeMethod(this, [this, std_file_name]() {
+                            appendMessage("[⚠️ Error computing hash for image " + std_file_name + "]", false);
+                            updateStatus("Ready");
+                        });
+                        return;
+                    }
 
-                    // Hamming Distance scan
-                    bool is_vashdi = false;
+                    // Hamming Distance scan against generic visual memories
+                    bool has_match = false;
+                    std::string matched_identity;
                     int min_distance = 64;
-                    for (uint64_t ref_hash : m_vashdi_hashes) {
-                        int dist = calculateHammingDistance(hash, ref_hash);
+
+                    for (const auto& entry : m_visual_memories) {
+                        int dist = calculateHammingDistance(hash, entry.first);
                         if (dist < min_distance) {
                             min_distance = dist;
+                            matched_identity = entry.second;
                         }
                     }
 
                     if (min_distance <= 10) {
-                        is_vashdi = true;
+                        has_match = true;
                     }
 
-                    QMetaObject::invokeMethod(this, [this, is_vashdi, std_file_path, std_file_name, std_ext, min_distance]() {
+                    QMetaObject::invokeMethod(this, [this, has_match, matched_identity, std_file_path, std_file_name, std_ext, min_distance]() {
                         m_pending_image_name = std_file_name;
-                        m_pending_image_is_vashdi = is_vashdi;
+                        m_pending_image_has_match = has_match;
+                        m_pending_image_match_identity = matched_identity;
+                        m_pending_image_file_path = std_file_path;
 
-                        if (is_vashdi) {
+                        if (has_match) {
                             // Match! Bypass Base64 payload!
                             m_pending_image_base64.clear();
                             m_pending_image_mime.clear();
-                            appendMessage("[🖼️ Attached Image: " + std_file_name + " (Identified: Marty's daughter, Vashdi - Context Optimized!)]", true);
-                            std::cout << "[Visual Memory] Match Triggered! Distance: " << min_distance << ". Bypassing Base64 payload." << std::endl;
+                            appendMessage("[🖼️ Attached Image: " + std_file_name + " (Identified: " + matched_identity + " - Context Optimized!)]", true);
+                            std::cout << "[Visual Memory] Match Triggered for '" << matched_identity << "'! Distance: " << min_distance << ". Bypassing Base64 payload." << std::endl;
                         } else {
                             // No match! Save raw Base64 as normal
                             QFile file(QString::fromStdString(std_file_path));
@@ -2023,8 +2041,8 @@ void QtUiApp::pollHandsfreeBuffer() {
     });
 }
 
-void QtUiApp::loadVashdiReferenceHashes() {
-    std::string ref_dir_str = resolve_project_path("memory/vashdi");
+void QtUiApp::loadVisualMemoryReferenceHashes() {
+    std::string ref_dir_str = resolve_project_path("memory");
     std::filesystem::path ref_dir(ref_dir_str);
     std::error_code ec;
     
@@ -2033,50 +2051,91 @@ void QtUiApp::loadVashdiReferenceHashes() {
         std::filesystem::create_directories(ref_dir, ec);
     }
     
-    m_vashdi_hashes.clear();
+    m_visual_memories.clear();
     
-    // Iterate through files in directory
-    for (const auto& entry : std::filesystem::directory_iterator(ref_dir, ec)) {
-        if (entry.is_regular_file()) {
-            std::string ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") {
-                QImage img(QString::fromStdString(entry.path().string()));
-                if (!img.isNull()) {
-                    uint64_t hash = computeImagePHash(img);
-                    m_vashdi_hashes.push_back(hash);
-                    std::cout << "[Visual Memory] Loaded reference hash: " << std::hex << hash << " for file: " << entry.path().filename().string() << std::endl;
+    // Iterate through all directories and files in memory/ recursively
+    try {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(ref_dir, ec)) {
+            if (entry.is_regular_file()) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") {
+                    try {
+                        QImage img(QString::fromStdString(entry.path().string()));
+                        if (!img.isNull()) {
+                            uint64_t hash = computeImagePHash(img);
+                            if (hash != 0) {
+                                // Determine the identity of the person:
+                                // If parent folder is not "memory", use parent folder name.
+                                // If parent folder is "memory", use the filename without extension.
+                                std::string identity;
+                                std::filesystem::path parent_path = entry.path().parent_path();
+                                if (parent_path.filename().string() != "memory") {
+                                    identity = parent_path.filename().string();
+                                } else {
+                                    identity = entry.path().stem().string();
+                                }
+
+                                // Replace underscores/hyphens with spaces for a cleaner natural representation
+                                std::replace(identity.begin(), identity.end(), '_', ' ');
+                                std::replace(identity.begin(), identity.end(), '-', ' ');
+
+                                m_visual_memories.push_back({hash, identity});
+                                std::cout << "[Visual Memory] Loaded reference hash: " << std::hex << hash 
+                                          << " for '" << identity << "' (file: " << entry.path().filename().string() << ")" << std::endl;
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[Visual Memory] Exception loading reference image " << entry.path().filename().string() << ": " << e.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "[Visual Memory] Unknown error loading reference image " << entry.path().filename().string() << std::endl;
+                    }
                 }
             }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "[Visual Memory] Recursive directory iterator exception: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[Visual Memory] Unknown directory iterator error" << std::endl;
     }
 }
 
 uint64_t QtUiApp::computeImagePHash(const QImage& img) {
     if (img.isNull()) return 0;
     
-    // 1. Resize to 8x8 pixels with FastTransformation
-    QImage small = img.scaled(8, 8, Qt::IgnoreAspectRatio, Qt::FastTransformation);
-    
-    // 2. Convert to grayscale and compute average luminance
-    uint64_t total = 0;
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            total += qGray(small.pixel(x, y));
+    try {
+        // 1. Resize to 8x8 pixels with FastTransformation
+        QImage small = img.scaled(8, 8, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        if (small.isNull() || small.width() < 8 || small.height() < 8) {
+            return 0;
         }
-    }
-    uchar avg = static_cast<uchar>(total / 64);
-    
-    // 3. Set bits in 64-bit uint64_t
-    uint64_t hash = 0;
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            if (qGray(small.pixel(x, y)) >= avg) {
-                hash |= (1ULL << (y * 8 + x));
+        
+        // 2. Convert to grayscale and compute average luminance
+        uint64_t total = 0;
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                total += qGray(small.pixel(x, y));
             }
         }
+        uchar avg = static_cast<uchar>(total / 64);
+        
+        // 3. Set bits in 64-bit uint64_t
+        uint64_t hash = 0;
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                if (qGray(small.pixel(x, y)) >= avg) {
+                    hash |= (1ULL << (y * 8 + x));
+                }
+            }
+        }
+        return hash;
+    } catch (const std::exception& e) {
+        std::cerr << "[Visual Memory] Exception computing pHash: " << e.what() << std::endl;
+        return 0;
+    } catch (...) {
+        std::cerr << "[Visual Memory] Unknown error computing pHash" << std::endl;
+        return 0;
     }
-    return hash;
 }
 
 int QtUiApp::calculateHammingDistance(uint64_t h1, uint64_t h2) {

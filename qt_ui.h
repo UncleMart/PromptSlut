@@ -183,6 +183,7 @@ class QtUiApp : public QMainWindow {
     Q_OBJECT
 
 public:
+    static QtUiApp* s_instance;
     explicit QtUiApp(Worker* worker, QWidget *parent = nullptr);
     ~QtUiApp() override = default;
 
@@ -337,11 +338,13 @@ public:
     std::string m_pending_image_name;
     std::string m_pending_image_mime;
     std::string m_pending_image_base64;
+    std::string m_pending_image_file_path;
     
-    // Client-side Visual Memory System (Vashdi Perceptual Hashing Pipeline)
-    std::vector<uint64_t> m_vashdi_hashes;
-    bool m_pending_image_is_vashdi = false;
-    void loadVashdiReferenceHashes();
+    // Client-side Visual Memory System (Generic Perceptual Hashing Pipeline)
+    std::vector<std::pair<uint64_t, std::string>> m_visual_memories;
+    bool m_pending_image_has_match = false;
+    std::string m_pending_image_match_identity;
+    void loadVisualMemoryReferenceHashes();
     static uint64_t computeImagePHash(const QImage& img);
     static int calculateHammingDistance(uint64_t h1, uint64_t h2);
     

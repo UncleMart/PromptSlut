@@ -1,10 +1,10 @@
-# PromptSlut (v0.82)
+# PromptSlut (v0.84)
 
 PromptSlut is a native, highly optimized C++ and Qt6 frontend designed to connect to any OpenAI-compatible endpoint. It is paired with an integrated local Python voice engine for always-on assistant voice loops and includes an Android companion project (Promptslutette) so you can run a local, lightweight vector model on a spare phone for memory storage and code analysis.
 
 This project focuses on keeping everything local, private, and running directly on your own system. It was designed to run Qwen 3.6 35B A3B as the main desktop model, and Qwen 3.5 0.8B for the mobile phone model, though any OpenAI-compatible API endpoint or local model of your choice can be easily configured.
 
-We are currently at v0.82, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
+We are currently at v0.84, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
 > **Personal Note and Disclosure**
 > 
@@ -40,6 +40,13 @@ The voice system features built-in subtractive gating and Acoustic Echo Cancella
 
 ### Dynamic User Profile Memory System
 PromptSlut features an active user memory consolidation system. Between turns, the secondary model runs lightweight profile-extraction prompts to extract permanent personal facts about you (such as your name, preferences, likes, and dislikes). These are merged with your existing memory profile, allowing the assistant to become increasingly friendly, personal, and knowledgeable about you over time.
+
+### Direct OS Automation & Real-Time Face Learning (New in v0.84)
+The tool calling ecosystem has been expanded to support physical desktop interaction and cognitive vision learning:
+- **Direct Windows Screenshotting**: Take full screenshots of `desktop_1`, `desktop_2` or specific active windows by title/substring. Captured screens are saved as `screenshot.png` and automatically attached as visual context for the model's next turn.
+- **Hardware-Level OS Automation**: Simulated mouse movements (with absolute dual-monitor coordinate mapping), mouse clicks (left/right/middle), drag-and-drop operations, and keyboard typing (direct UTF-8 unicode scans). Special shortcuts (e.g., `"ctrl+v"`, `"ctrl+a"`, `"enter"`, `"tab"`) are natively supported.
+- **Cognitive Face & Object Learning (`register_face`)**: Simply drop an unfamiliar image, tell the model who or what it is, and it will autonomously save, compile into 64-bit perceptual hashes, and register them dynamically. Matches are hot-reloaded instantly in-memory, bypassing VRAM footprint completely on all future matches.
+- **Native JPEG/WebP Support**: Included pre-configured Qt image format plugins (`qjpeg.dll`, `qwebp.dll`) and library dependencies (`libjpeg-8.dll`, `libwebp-7.dll`) to ensure robust cross-platform parsing of dropped images out-of-the-box.
 
 ### Overhauled, Cross-Platform Desktop Tools & Context Engine (New in v0.82)
 The tool calling pipeline and context orchestration have been completely re-engineered to provide OpenCode-level robust task execution and virtually infinite conversation memory:

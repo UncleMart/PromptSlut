@@ -179,6 +179,8 @@ set(REQUIRED_DLLS
     libmd4c-html.dll
     libbz2-1.dll
     libpcre2-8-0.dll
+    libjpeg-8.dll
+    libwebp-7.dll
 )
 
 if(ENABLE_VOICE_MODE)
@@ -210,4 +212,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${MSYS2_QT_PLUGINS}/platforms"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${MSYS2_QT_PLUGINS}/imageformats"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/imageformats"
 )

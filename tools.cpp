@@ -2,6 +2,12 @@
 #include "convert.h"
 #include "keyfile.h"
 #include "httplib.h"
+#include "qt_ui.h"
+#include <QApplication>
+#include <QScreen>
+#include <QPixmap>
+#include <QGuiApplication>
+#include <QBuffer>
 #include <string>
 #include <fstream>
 #include <sstream>
@@ -651,4 +657,479 @@ std::string RememberTool::execute(const nlohmann::json& args) {
     save_profile_memory(profile);
 
     return "Success: Fact successfully saved to permanent long-term memory: \"" + fact + "\"";
+}
+
+// ---------------------------------------------------------------------------
+// ScreenshotTool Implementation
+// ---------------------------------------------------------------------------
+
+struct WindowSearch {
+    std::string substring;
+    HWND result_hwnd = nullptr;
+};
+
+static BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
+    WindowSearch* search = reinterpret_cast<WindowSearch*>(lParam);
+    char title[512];
+    if (GetWindowTextA(hwnd, title, sizeof(title)) > 0) {
+        std::string title_str(title);
+        std::string t_lower = title_str;
+        std::string s_lower = search->substring;
+        std::transform(t_lower.begin(), t_lower.end(), t_lower.begin(), ::tolower);
+        std::transform(s_lower.begin(), s_lower.end(), s_lower.begin(), ::tolower);
+
+        if (t_lower.find(s_lower) != std::string::npos) {
+            if (IsWindowVisible(hwnd)) {
+                search->result_hwnd = hwnd;
+                return FALSE; // Stop enumerating
+            }
+        }
+    }
+    return TRUE; // Continue enumerating
+}
+
+static HWND GetWindowBySubstring(const std::string& substring) {
+    WindowSearch search;
+    search.substring = substring;
+    EnumWindows(EnumWindowsProc, reinterpret_cast<LPARAM>(&search));
+    return search.result_hwnd;
+}
+
+std::string ScreenshotTool::execute(const json& arguments) {
+    std::string target = "desktop_1";
+    if (arguments.contains("target") && arguments["target"].is_string()) {
+        target = arguments["target"].get<std::string>();
+    }
+
+    std::string base64_image;
+    bool success = false;
+    std::string error_msg;
+
+    QMetaObject::invokeMethod(qApp, [&]() {
+        try {
+            QList<QScreen*> screens = QGuiApplication::screens();
+            QPixmap pixmap;
+
+            if (target == "desktop_1") {
+                if (!screens.isEmpty()) {
+                    pixmap = screens[0]->grabWindow(0);
+                    success = true;
+                } else {
+                    error_msg = "No screens found";
+                }
+            } else if (target == "desktop_2") {
+                if (screens.size() > 1) {
+                    pixmap = screens[1]->grabWindow(0);
+                    success = true;
+                } else if (!screens.isEmpty()) {
+                    pixmap = screens[0]->grabWindow(0); // fallback
+                    success = true;
+                } else {
+                    error_msg = "No screens found";
+                }
+            } else {
+                HWND hwnd = FindWindowA(NULL, target.c_str());
+                if (!hwnd) {
+                    hwnd = GetWindowBySubstring(target);
+                }
+
+                if (hwnd) {
+                    RECT rect;
+                    if (GetWindowRect(hwnd, &rect)) {
+                        int w = rect.right - rect.left;
+                        int h = rect.bottom - rect.top;
+                        if (w > 0 && h > 0) {
+                            QScreen* screen = QGuiApplication::primaryScreen();
+                            if (screen) {
+                                pixmap = screen->grabWindow(reinterpret_cast<WId>(hwnd));
+                                success = true;
+                            } else {
+                                error_msg = "Primary screen not found";
+                            }
+                        } else {
+                            error_msg = "Window has invalid/zero dimensions";
+                        }
+                    } else {
+                        error_msg = "Failed to get window coordinates";
+                    }
+                } else {
+                    error_msg = "Window with title/substring '" + target + "' not found. Try 'desktop_1' or check open window names.";
+                }
+            }
+
+            if (success && !pixmap.isNull()) {
+                std::string screenshot_path = resolve_path("screenshot.png").string();
+                pixmap.save(QString::fromStdString(screenshot_path), "PNG");
+
+                QByteArray bytes;
+                QBuffer buffer(&bytes);
+                buffer.open(QIODevice::WriteOnly);
+                pixmap.save(&buffer, "PNG");
+                base64_image = bytes.toBase64().toStdString();
+
+                if (QtUiApp::s_instance) {
+                    QtUiApp::s_instance->m_pending_image_base64 = base64_image;
+                    QtUiApp::s_instance->m_pending_image_mime = "image/png";
+                    QtUiApp::s_instance->m_pending_image_name = "screenshot.png";
+                    QtUiApp::s_instance->m_pending_image_has_match = false;
+                }
+            } else if (pixmap.isNull() && error_msg.empty()) {
+                error_msg = "Failed to capture image data (null pixmap)";
+            }
+        } catch (const std::exception& e) {
+            error_msg = std::string("Exception during capture: ") + e.what();
+        } catch (...) {
+            error_msg = "Unknown error during capture";
+        }
+    }, Qt::BlockingQueuedConnection);
+
+    if (!success || base64_image.empty()) {
+        return "Error taking screenshot: " + error_msg;
+    }
+
+    return "Success: Screenshot of '" + target + "' captured successfully, saved to workspace as 'screenshot.png', and automatically attached as visual input for your next turn.";
+}
+
+// ---------------------------------------------------------------------------
+// OSAutomationTool Implementation
+// ---------------------------------------------------------------------------
+
+static WORD GetVirtualKeyCode(const std::string& key) {
+    std::string k = key;
+    std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+
+    if (k == "enter" || k == "return") return VK_RETURN;
+    if (k == "tab") return VK_TAB;
+    if (k == "backspace" || k == "back") return VK_BACK;
+    if (k == "escape" || k == "esc") return VK_ESCAPE;
+    if (k == "space") return VK_SPACE;
+    if (k == "up") return VK_UP;
+    if (k == "down") return VK_DOWN;
+    if (k == "left") return VK_LEFT;
+    if (k == "right") return VK_RIGHT;
+    if (k == "delete" || k == "del") return VK_DELETE;
+    if (k == "ctrl" || k == "control") return VK_CONTROL;
+    if (k == "shift") return VK_SHIFT;
+    if (k == "alt" || k == "menu") return VK_MENU;
+    if (k == "win" || k == "lwin") return VK_LWIN;
+    if (k == "f1") return VK_F1;
+    if (k == "f2") return VK_F2;
+    if (k == "f3") return VK_F3;
+    if (k == "f4") return VK_F4;
+    if (k == "f5") return VK_F5;
+    if (k == "f6") return VK_F6;
+    if (k == "f7") return VK_F7;
+    if (k == "f8") return VK_F8;
+    if (k == "f9") return VK_F9;
+    if (k == "f10") return VK_F10;
+    if (k == "f11") return VK_F11;
+    if (k == "f12") return VK_F12;
+    
+    if (k.size() == 1) {
+        char c = k[0];
+        if (c >= 'a' && c <= 'z') return c - 'a' + 'A';
+        if (c >= '0' && c <= '9') return c;
+    }
+
+    return 0;
+}
+
+static void SimulateMouseMove(int x, int y) {
+    INPUT input = {0};
+    input.type = INPUT_MOUSE;
+    
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+    input.mi.dx = ((x - vx) * 65536) / vw;
+    input.mi.dy = ((y - vy) * 65536) / vh;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    SendInput(1, &input, sizeof(INPUT));
+}
+
+static void SimulateMouseClick(int x, int y, const std::string& button) {
+    SimulateMouseMove(x, y);
+    Sleep(50);
+
+    INPUT inputs[2] = {0};
+    inputs[0].type = INPUT_MOUSE;
+    inputs[1].type = INPUT_MOUSE;
+
+    if (button == "right") {
+        inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
+        inputs[1].mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+    } else if (button == "middle") {
+        inputs[0].mi.dwFlags = MOUSEEVENTF_MIDDLEDOWN;
+        inputs[1].mi.dwFlags = MOUSEEVENTF_MIDDLEUP;
+    } else {
+        inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    }
+
+    SendInput(2, inputs, sizeof(INPUT));
+}
+
+static void SimulateMouseDrag(int start_x, int start_y, int end_x, int end_y, const std::string& button) {
+    SimulateMouseMove(start_x, start_y);
+    Sleep(50);
+
+    INPUT down_input = {0};
+    down_input.type = INPUT_MOUSE;
+    if (button == "right") {
+        down_input.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
+    } else {
+        down_input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    }
+    SendInput(1, &down_input, sizeof(INPUT));
+    Sleep(50);
+
+    SimulateMouseMove(end_x, end_y);
+    Sleep(50);
+
+    INPUT up_input = {0};
+    up_input.type = INPUT_MOUSE;
+    if (button == "right") {
+        up_input.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+    } else {
+        up_input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    }
+    SendInput(1, &up_input, sizeof(INPUT));
+}
+
+static void SimulateTypeText(const std::wstring& wtext) {
+    for (wchar_t wc : wtext) {
+        INPUT inputs[2] = {0};
+        
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wScan = wc;
+        inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
+
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wScan = wc;
+        inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+        SendInput(2, inputs, sizeof(INPUT));
+        Sleep(10);
+    }
+}
+
+static void SimulateKeyPress(const std::string& key_combo) {
+    std::vector<std::string> keys;
+    std::stringstream ss(key_combo);
+    std::string token;
+    while (std::getline(ss, token, '+')) {
+        token.erase(0, token.find_first_not_of(" \t\r\n"));
+        token.erase(token.find_last_not_of(" \t\r\n") + 1);
+        if (!token.empty()) {
+            keys.push_back(token);
+        }
+    }
+
+    std::vector<WORD> vk_codes;
+    for (const auto& key : keys) {
+        WORD vk = GetVirtualKeyCode(key);
+        if (vk != 0) {
+            vk_codes.push_back(vk);
+        }
+    }
+
+    if (vk_codes.empty()) return;
+
+    std::vector<INPUT> inputs_down(vk_codes.size(), {0});
+    for (size_t i = 0; i < vk_codes.size(); ++i) {
+        inputs_down[i].type = INPUT_KEYBOARD;
+        inputs_down[i].ki.wVk = vk_codes[i];
+    }
+    SendInput(static_cast<UINT>(inputs_down.size()), inputs_down.data(), sizeof(INPUT));
+    
+    Sleep(20);
+
+    std::vector<INPUT> inputs_up(vk_codes.size(), {0});
+    for (size_t i = 0; i < vk_codes.size(); ++i) {
+        size_t idx = vk_codes.size() - 1 - i;
+        inputs_up[i].type = INPUT_KEYBOARD;
+        inputs_up[i].ki.wVk = vk_codes[idx];
+        inputs_up[i].ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    SendInput(static_cast<UINT>(inputs_up.size()), inputs_up.data(), sizeof(INPUT));
+}
+
+std::string OSAutomationTool::execute(const json& arguments) {
+    if (!arguments.contains("action") || !arguments["action"].is_string()) {
+        return "Error: missing 'action' parameter.";
+    }
+    std::string action = arguments["action"].get<std::string>();
+
+    try {
+        if (action == "move_mouse") {
+            if (!arguments.contains("x") || !arguments["x"].is_number() ||
+                !arguments.contains("y") || !arguments["y"].is_number()) {
+                return "Error: 'move_mouse' requires both 'x' and 'y' integer arguments.";
+            }
+            int x = arguments["x"].get<int>();
+            int y = arguments["y"].get<int>();
+            SimulateMouseMove(x, y);
+            return "Success: Moved mouse cursor to absolute screen coordinates (" + std::to_string(x) + ", " + std::to_string(y) + ")";
+        }
+        else if (action == "click_mouse") {
+            if (!arguments.contains("x") || !arguments["x"].is_number() ||
+                !arguments.contains("y") || !arguments["y"].is_number()) {
+                return "Error: 'click_mouse' requires both 'x' and 'y' integer arguments.";
+            }
+            int x = arguments["x"].get<int>();
+            int y = arguments["y"].get<int>();
+            std::string button = "left";
+            if (arguments.contains("button") && arguments["button"].is_string()) {
+                button = arguments["button"].get<std::string>();
+            }
+            SimulateMouseClick(x, y, button);
+            return "Success: Simulated mouse click with '" + button + "' button at (" + std::to_string(x) + ", " + std::to_string(y) + ")";
+        }
+        else if (action == "drag_mouse") {
+            if (!arguments.contains("x") || !arguments["x"].is_number() ||
+                !arguments.contains("y") || !arguments["y"].is_number() ||
+                !arguments.contains("end_x") || !arguments["end_x"].is_number() ||
+                !arguments.contains("end_y") || !arguments["end_y"].is_number()) {
+                return "Error: 'drag_mouse' requires 'x', 'y', 'end_x', and 'end_y' integer arguments.";
+            }
+            int x = arguments["x"].get<int>();
+            int y = arguments["y"].get<int>();
+            int end_x = arguments["end_x"].get<int>();
+            int end_y = arguments["end_y"].get<int>();
+            std::string button = "left";
+            if (arguments.contains("button") && arguments["button"].is_string()) {
+                button = arguments["button"].get<std::string>();
+            }
+            SimulateMouseDrag(x, y, end_x, end_y, button);
+            return "Success: Simulated mouse drag from (" + std::to_string(x) + ", " + std::to_string(y) + ") to (" + std::to_string(end_x) + ", " + std::to_string(end_y) + ")";
+        }
+        else if (action == "type_text") {
+            if (!arguments.contains("text") || !arguments["text"].is_string()) {
+                return "Error: 'type_text' requires a 'text' string argument.";
+            }
+            std::string text = arguments["text"].get<std::string>();
+            std::wstring wtext = QString::fromStdString(text).toStdWString();
+            SimulateTypeText(wtext);
+            return "Success: Typed text: \"" + text + "\"";
+        }
+        else if (action == "press_key") {
+            if (!arguments.contains("key") || !arguments["key"].is_string()) {
+                return "Error: 'press_key' requires a 'key' string argument (e.g. 'enter', 'ctrl+v').";
+            }
+            std::string key = arguments["key"].get<std::string>();
+            SimulateKeyPress(key);
+            return "Success: Pressed keyboard key/combo: \"" + key + "\"";
+        }
+        else if (action == "focus_window") {
+            if (!arguments.contains("target") || !arguments["target"].is_string()) {
+                return "Error: 'focus_window' requires a 'target' string argument (title or substring of the window to focus).";
+            }
+            std::string target = arguments["target"].get<std::string>();
+            HWND hwnd = FindWindowA(NULL, target.c_str());
+            if (!hwnd) {
+                hwnd = GetWindowBySubstring(target);
+            }
+
+            if (hwnd) {
+                if (IsIconic(hwnd)) {
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+                SetForegroundWindow(hwnd);
+                return "Success: Brought window matching '" + target + "' to foreground and focus.";
+            } else {
+                return "Error: Window matching '" + target + "' not found.";
+            }
+        }
+        else {
+            return "Error: Unknown action '" + action + "'";
+        }
+    } catch (const std::exception& e) {
+        return "Error in OS Automation: " + std::string(e.what());
+    } catch (...) {
+        return "Unknown error in OS Automation.";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RegisterFaceTool Implementation
+// ---------------------------------------------------------------------------
+
+std::string RegisterFaceTool::execute(const json& arguments) {
+    if (!arguments.contains("identity") || !arguments["identity"].is_string()) {
+        return "Error: missing 'identity' parameter.";
+    }
+    std::string identity = arguments["identity"].get<std::string>();
+
+    // Strip whitespace and trailing/leading junk from identity
+    identity.erase(0, identity.find_first_not_of(" \t\r\n\"'"));
+    identity.erase(identity.find_last_not_of(" \t\r\n\"'") + 1);
+
+    if (identity.empty()) {
+        return "Error: 'identity' parameter cannot be empty.";
+    }
+
+    std::string src_path;
+    std::string base64_data;
+
+    if (QtUiApp::s_instance) {
+        src_path = QtUiApp::s_instance->m_pending_image_file_path;
+        base64_data = QtUiApp::s_instance->m_pending_image_base64;
+    }
+
+    if (src_path.empty() && base64_data.empty()) {
+        return "Error: No active or pending image found in the current context to register. Please attach or drag-and-drop an image first, then tell me who is in it.";
+    }
+
+    std::error_code ec;
+    std::string target_dir = resolve_path("memory/" + identity).string();
+    std::filesystem::create_directories(target_dir, ec);
+    if (ec) {
+        return "Error creating directory for visual memory: " + ec.message();
+    }
+
+    bool success = false;
+    std::string saved_file_path;
+
+    if (!src_path.empty() && std::filesystem::exists(src_path)) {
+        // Copy the original file to preserve exact format and fidelity
+        std::string filename = std::filesystem::path(src_path).filename().string();
+        std::string dest_path = target_dir + "/" + filename;
+        std::filesystem::copy_file(src_path, dest_path, std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            success = true;
+            saved_file_path = dest_path;
+        } else {
+            return "Error copying image file to reference memory: " + ec.message();
+        }
+    } else if (!base64_data.empty()) {
+        // Decode and save from raw Base64 (for screenshots/clipboard pastes)
+        QByteArray decoded = QByteArray::fromBase64(QByteArray::fromStdString(base64_data));
+        std::string dest_path = target_dir + "/face.png";
+        std::ofstream out(dest_path, std::ios::binary);
+        if (out.is_open()) {
+            out.write(decoded.constData(), decoded.size());
+            out.close();
+            success = true;
+            saved_file_path = dest_path;
+        } else {
+            return "Error saving screenshot data to reference memory.";
+        }
+    }
+
+    if (success) {
+        // Hot reload the visual memory system on the GUI thread
+        if (QtUiApp::s_instance) {
+            QMetaObject::invokeMethod(QtUiApp::s_instance, []() {
+                QtUiApp::s_instance->loadVisualMemoryReferenceHashes();
+            }, Qt::BlockingQueuedConnection);
+
+            // Clear the pending path/file to complete the learning registration
+            QtUiApp::s_instance->m_pending_image_file_path.clear();
+        }
+        return "Success: Successfully learned the face of '" + identity + "'. The reference image has been copied to reference memory at '" + saved_file_path + "', compiled into perceptual hashes, and registered in real-time. I will now recognize " + identity + " automatically on all future images!";
+    }
+
+    return "Error: Failed to register face.";
 }
