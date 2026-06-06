@@ -27,7 +27,8 @@ public:
     nlohmann::json chat_completion(
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools = {},
-        const std::string& model = "qwen3:latest");
+        const std::string& model = "qwen3:latest",
+        const nlohmann::json& response_format = {});
 
     // Streaming version — calls on_chunk with each SSE fragment.
     // Returns when [DONE] is received or on error.
@@ -35,7 +36,8 @@ public:
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools,
         const std::string& model,
-        std::function<void(const std::string& chunk)> on_chunk);
+        std::function<void(const std::string& chunk)> on_chunk,
+        const nlohmann::json& response_format = {});
 
 private:
     std::string host_;
@@ -46,7 +48,8 @@ private:
     nlohmann::json make_request(
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools,
-        const std::string& model);
+        const std::string& model,
+        const nlohmann::json& response_format = {});
 
     // Perform the HTTP POST and return the response body as a string.
     std::string post(const std::string& url, const std::string& body);

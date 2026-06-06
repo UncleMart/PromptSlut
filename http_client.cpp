@@ -20,7 +20,8 @@ HttpForwarder::HttpForwarder(std::string_view host, int port, std::string_view a
 nlohmann::json HttpForwarder::make_request(
     const std::vector<nlohmann::json>& messages,
     const std::vector<nlohmann::json>& tools,
-    const std::string& model)
+    const std::string& model,
+    const nlohmann::json& response_format)
 {
     std::cout << "[DEBUG CLIENT] inside make_request" << std::endl;
     nlohmann::json req;
@@ -31,6 +32,9 @@ nlohmann::json HttpForwarder::make_request(
 
     if (!tools.empty())
         req["tools"] = tools;
+
+    if (!response_format.empty())
+        req["response_format"] = response_format;
 
     std::cout << "[DEBUG CLIENT] make_request finished" << std::endl;
     return req;
@@ -71,13 +75,13 @@ std::string HttpForwarder::post(const std::string& url, const std::string& body)
 }
 
 nlohmann::json HttpForwarder::chat_completion(
-
     const std::vector<nlohmann::json>& messages,
     const std::vector<nlohmann::json>& tools,
-    const std::string& model)
+    const std::string& model,
+    const nlohmann::json& response_format)
 {
     std::cout << "[DEBUG CLIENT] inside chat_completion" << std::endl;
-    nlohmann::json payload = make_request(messages, tools, model);
+    nlohmann::json payload = make_request(messages, tools, model, response_format);
 
     std::cout << "[DEBUG CLIENT] dumping payload..." << std::endl;
     std::string body = payload.dump();
@@ -170,9 +174,10 @@ void HttpForwarder::chat_completion_stream(
     const std::vector<nlohmann::json>& messages,
     const std::vector<nlohmann::json>& tools,
     const std::string& model,
-    std::function<void(const std::string& chunk)> on_chunk)
+    std::function<void(const std::string& chunk)> on_chunk,
+    const nlohmann::json& response_format)
 {
-    nlohmann::json payload = make_request(messages, tools, model);
+    nlohmann::json payload = make_request(messages, tools, model, response_format);
     payload["stream"] = true;
     payload["stream_options"] = nlohmann::json::parse("{\"enable\":true}");
     

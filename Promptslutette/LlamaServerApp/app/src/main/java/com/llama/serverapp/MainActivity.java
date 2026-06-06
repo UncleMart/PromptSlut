@@ -115,6 +115,14 @@ public class MainActivity extends AppCompatActivity {
 
         // Request permissions on startup
         requestAllRequiredPermissions();
+
+        // Start Promptslutette RAG Sync Service automatically on boot
+        Intent syncIntent = new Intent(this, PromptslutetteService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(syncIntent);
+        } else {
+            startService(syncIntent);
+        }
     }
 
     @Override

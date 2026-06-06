@@ -47,6 +47,17 @@
                 android:value="Self-hosted local LLM backend server running 24/7 on the device" />
         </service>
 
+        <!-- Foreground service for Promptslutette RAG vector database synchronization -->
+        <service
+            android:name=".PromptslutetteService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Self-hosted local RAG vector database synchronization server running 24/7 on the device" />
+        </service>
+
     </application>
 
 </manifest>
