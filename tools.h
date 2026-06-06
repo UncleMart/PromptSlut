@@ -297,6 +297,48 @@ public:
     }
 };
 
+// ---------------------------------------------------------------------------
+// ScheduleReminderTool & CancelReminderTool — Chronos Engine bindings
+// ---------------------------------------------------------------------------
+
+class ScheduleReminderTool : public Tool
+{
+public:
+    std::string name() const override { return "schedule_reminder"; }
+    std::string description() const override { return "Schedule a time-based reminder or deferred wakeup task inside the Chronos Engine."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"id", {{"type", "string"}, {"description", "Unique alphanumeric ID for the task"}}},
+                {"target_time", {{"type", "string"}, {"description", "The exact target execution timestamp in ISO 8601 format (YYYY-MM-DDTHH:MM:SS)"}}},
+                {"system_instruction", {{"type", "string"}, {"description", "Direct system prompt context to feed the model when triggered"}}},
+                {"user_context", {{"type", "string"}, {"description", "Context/prompt simulating a user reminder trigger"}}},
+                {"requires_voice_alert", {{"type", "boolean"}, {"description", "Announce/speak verbally using TTS"}}}
+            }},
+            {"required", {"id", "target_time", "system_instruction", "user_context"}}
+        };
+    }
+};
+
+class CancelReminderTool : public Tool
+{
+public:
+    std::string name() const override { return "cancel_reminder"; }
+    std::string description() const override { return "Cancel a previously scheduled reminder task by its unique task ID."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"id", {{"type", "string"}, {"description", "The unique task ID to cancel"}}}
+            }},
+            {"required", {"id"}}
+        };
+    }
+};
+
 // Workspace directory helpers
 void set_workspace_directory(const std::filesystem::path& path);
 std::filesystem::path get_workspace_directory();

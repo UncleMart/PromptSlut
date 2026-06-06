@@ -73,6 +73,9 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     handleVoiceToggle(m_voice_mode_enabled);
     updateWorkspaceLabel();
 
+    m_chronos_engine = new ChronosEngine(this);
+    connect(m_chronos_engine, &ChronosEngine::eventTriggered, this, &QtUiApp::handleChronosEvent);
+
     // Load existing sessions from disk or start with a fresh one if empty
     load_all_sessions_from_disk();
     if (m_sessions.empty()) {
@@ -477,6 +480,8 @@ void QtUiApp::handleSend() {
     std::strftime(date_buf, sizeof(date_buf), "%A, %B %d, %Y", &clock_now_tm);
     char time_buf[100];
     std::strftime(time_buf, sizeof(time_buf), "%I:%M:%S %p", &clock_now_tm);
+    char iso_buf[100];
+    std::strftime(iso_buf, sizeof(iso_buf), "%Y-%m-%dT%H:%M:%S", &clock_now_tm);
 
     // Check if the user's name is actually present inside the memory profile (XOR-cached)
     bool name_known = false;
@@ -493,7 +498,8 @@ void QtUiApp::handleSend() {
     
     std::string system_prompt = base_prompt + "\n\n"
                                 "CRITICAL SYSTEM CONSTRAINTS AND CONTEXT:\n"
-                                "- CURRENT REAL-TIME TEMPORAL CONTEXT: Today is " + std::string(date_buf) + ", and the current system time is " + std::string(time_buf) + ".\n";
+                                "- CURRENT REAL-TIME TEMPORAL CONTEXT: Today is " + std::string(date_buf) + ", and the current system time is " + std::string(time_buf) + ".\n"
+                                "- CURRENT SYSTEM TIMESTAMP (ISO 8601 format required for schedule_reminder): " + std::string(iso_buf) + "\n";
 
     if (name_known) {
         system_prompt += "- You KNOW the following personal details about the user:\n"
@@ -519,10 +525,15 @@ void QtUiApp::handleSend() {
     if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
         std::string digest = m_sessions[m_current_session_index].memory_digest;
         if (!digest.empty()) {
-            system_prompt += "\n\n[ARCHIVED CONVERSATION MEMORY DIGEST]\n"
-                             "Below is a high-density consolidated digest of the older conversation history that has been trimmed for context space:\n" + digest + "\n\n"
-                             "- If you ever need the exact raw text or complete details of what was discussed, you can use the 'file' tool with op='read' to read from the archive file: \"sessions/archive_" + m_sessions[m_current_session_index].id + ".md\".\n";
+             system_prompt += "\n\n[ARCHIVED CONVERSATION MEMORY DIGEST]\n"
+                              "Below is a high-density consolidated digest of the older conversation history that has been trimmed for context space:\n" + digest + "\n\n"
+                              "- If you ever need the exact raw text or complete details of what was discussed, you can use the 'file' tool with op='read' to read from the archive file: \"sessions/archive_" + m_sessions[m_current_session_index].id + ".md\".\n";
         }
+    }
+
+    if (!m_pending_chronos_instruction.empty()) {
+        system_prompt += "\n\n[URGENT ACTIVE REMINDER CONTEXT]\n" + m_pending_chronos_instruction + "\n";
+        m_pending_chronos_instruction.clear();
     }
 
     std::vector<nlohmann::json> messages;
@@ -1927,6 +1938,18 @@ void QtUiApp::handleTranscriptionReady(const QString& text) {
     } else {
         updateStatus("Ready");
     }
+}
+
+void QtUiApp::handleChronosEvent(const ChronosTask& task) {
+    appendMessage("[⏰ Chronos Task Triggered: " + task.id.toStdString() + " — " + task.userContext.toStdString() + "]", false);
+    m_pending_chronos_instruction = task.systemInstruction.toStdString();
+    
+    if (task.requiresVoiceAlert && !m_voice_mode_enabled) {
+        handleVoiceToggle(true);
+    }
+
+    m_input_field->setPlainText(task.userContext);
+    handleSend();
 }
 
 void QtUiApp::handleVoiceToggle(bool checked) {

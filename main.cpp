@@ -25,6 +25,8 @@ int main(int argc, char *argv[]) {
     worker.register_tool(std::make_shared<ScreenshotTool>());
     worker.register_tool(std::make_shared<OSAutomationTool>());
     worker.register_tool(std::make_shared<RegisterFaceTool>());
+    worker.register_tool(std::make_shared<ScheduleReminderTool>());
+    worker.register_tool(std::make_shared<CancelReminderTool>());
 
     ToolRegistry temp_reg;
     temp_reg.register_tool(std::make_shared<FileTool>());
@@ -40,6 +42,8 @@ int main(int argc, char *argv[]) {
     temp_reg.register_tool(std::make_shared<ScreenshotTool>());
     temp_reg.register_tool(std::make_shared<OSAutomationTool>());
     temp_reg.register_tool(std::make_shared<RegisterFaceTool>());
+    temp_reg.register_tool(std::make_shared<ScheduleReminderTool>());
+    temp_reg.register_tool(std::make_shared<CancelReminderTool>());
     worker.set_tool_registry(temp_reg.to_json());
     
     // 2. Launch the Qt Application

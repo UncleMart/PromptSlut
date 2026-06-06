@@ -27,6 +27,7 @@ set(SOURCES
     logger.cpp
     tool_router.cpp
     tools.cpp
+    ChronosEngine.cpp
     resources.rc
 )
 

@@ -2,6 +2,7 @@
 #define QT_UI_H
 
 #include <QMainWindow>
+#include "ChronosEngine.h"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -211,6 +212,7 @@ private slots:
     void handleMicPressed();
     void handleMicReleased();
     void handleTranscriptionReady(const QString& text);
+    void handleChronosEvent(const ChronosTask& task);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -331,6 +333,10 @@ public:
     int m_sec_port_val = 8081;
     std::string m_sec_apikey_val;
     std::string m_sec_model_val;
+
+    // Chronos Engine System
+    ChronosEngine* m_chronos_engine = nullptr;
+    std::string m_pending_chronos_instruction;
 
     // File Attachment & Image Attachment states
     std::string m_attached_file_name;

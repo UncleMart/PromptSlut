@@ -1133,3 +1133,62 @@ std::string RegisterFaceTool::execute(const json& arguments) {
 
     return "Error: Failed to register face.";
 }
+
+// ---------------------------------------------------------------------------
+// ScheduleReminderTool & CancelReminderTool Implementation
+// ---------------------------------------------------------------------------
+
+std::string ScheduleReminderTool::execute(const json& arguments) {
+    if (!arguments.contains("id") || !arguments["id"].is_string() ||
+        !arguments.contains("target_time") || !arguments["target_time"].is_string() ||
+        !arguments.contains("system_instruction") || !arguments["system_instruction"].is_string() ||
+        !arguments.contains("user_context") || !arguments["user_context"].is_string()) {
+        return "Error: missing required parameters. 'id', 'target_time', 'system_instruction', and 'user_context' are all required.";
+    }
+
+    std::string id = arguments["id"].get<std::string>();
+    std::string target_time_str = arguments["target_time"].get<std::string>();
+    std::string system_instruction = arguments["system_instruction"].get<std::string>();
+    std::string user_context = arguments["user_context"].get<std::string>();
+    bool requires_voice = false;
+    if (arguments.contains("requires_voice_alert") && arguments["requires_voice_alert"].is_boolean()) {
+        requires_voice = arguments["requires_voice_alert"].get<bool>();
+    }
+
+    QDateTime targetTime = QDateTime::fromString(QString::fromStdString(target_time_str), Qt::ISODate);
+    if (!targetTime.isValid()) {
+        return "Error: 'target_time' has an invalid ISO 8601 format. Please use YYYY-MM-DDTHH:MM:SS format.";
+    }
+
+    if (QtUiApp::s_instance && QtUiApp::s_instance->m_chronos_engine) {
+        ChronosTask task;
+        task.id = QString::fromStdString(id);
+        task.targetTime = targetTime;
+        task.systemInstruction = QString::fromStdString(system_instruction);
+        task.userContext = QString::fromStdString(user_context);
+        task.requiresVoiceAlert = requires_voice;
+
+        QtUiApp::s_instance->m_chronos_engine->scheduleTask(task);
+        return "Success: Task '" + id + "' scheduled successfully inside Chronos Engine for execution at " + target_time_str;
+    }
+
+    return "Error: Chronos Engine is not active.";
+}
+
+std::string CancelReminderTool::execute(const json& arguments) {
+    if (!arguments.contains("id") || !arguments["id"].is_string()) {
+        return "Error: missing 'id' parameter.";
+    }
+    std::string id = arguments["id"].get<std::string>();
+
+    if (QtUiApp::s_instance && QtUiApp::s_instance->m_chronos_engine) {
+        bool cancelled = QtUiApp::s_instance->m_chronos_engine->cancelTask(QString::fromStdString(id));
+        if (cancelled) {
+            return "Success: Cancelled task '" + id + "' from Chronos Engine.";
+        } else {
+            return "Error: Task '" + id + "' not found in Chronos Engine.";
+        }
+    }
+
+    return "Error: Chronos Engine is not active.";
+}
