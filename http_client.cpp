@@ -236,6 +236,11 @@ void HttpForwarder::chat_completion_stream(
                             std::string content = delta_obj["content"].get<std::string>();
                             if (on_chunk) on_chunk(content);
                         }
+                        if (delta_obj.contains("reasoning_content") && !delta_obj["reasoning_content"].is_null())
+                        {
+                            std::string content = delta_obj["reasoning_content"].get<std::string>();
+                            if (on_chunk) on_chunk(content);
+                        }
                         if (delta_obj.contains("tool_calls") && !delta_obj["tool_calls"].is_null())
                         {
                             for (auto& tc : delta_obj["tool_calls"])

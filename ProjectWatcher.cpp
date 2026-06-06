@@ -57,6 +57,10 @@ QString ProjectWatcherWorker::readFileContent(const QString& filePath) {
 void ProjectWatcherWorker::performBackgroundScan(const QString& dirPath) {
     QDirIterator it(dirPath, QStringList() << "*.cpp" << "*.h" << "*.py" << "*.md" << "*.txt", QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        {
+            QMutexLocker locker(&m_mutex);
+            if (!m_running) break;
+        }
         QString fPath = it.next();
         QString content = readFileContent(fPath);
         emit fileDiscovered(fPath, content);
@@ -207,13 +211,15 @@ bool ProjectWatcher::isGatekeeperRefused(const QString& absolutePath) const {
 void ProjectWatcher::setWorkingDirectory(const QString &path) {
     QMutexLocker locker(&m_stateMutex);
 
-    // Stop and tear down existing thread system safely if active
+    // Stop and tear down existing thread system safely and asynchronously if active
     if (m_workerThread) {
         m_worker->stop();
         m_workerThread->quit();
-        m_workerThread->wait();
-        m_workerThread->deleteLater();
-        m_worker->deleteLater();
+        
+        // Connect finished signal to deleteLater for self-cleanup asynchronously
+        connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+        connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
+        
         m_workerThread = nullptr;
         m_worker = nullptr;
     }
