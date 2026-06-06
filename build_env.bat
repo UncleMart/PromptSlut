@@ -1,5 +1,12 @@
 @echo off
 cd /d "%~dp0"
+
+echo [Backup] Backing up configuration and memory files if present...
+if not exist temp_backup mkdir temp_backup
+if exist build\bin\promptslut.profile copy build\bin\promptslut.profile temp_backup\ /y >nul
+if exist build\bin\promptslut.key copy build\bin\promptslut.key temp_backup\ /y >nul
+if exist build\bin\promptslut.dict copy build\bin\promptslut.dict temp_backup\ /y >nul
+
 if exist build rmdir /s /q build
 
 set MSYS_PATH=C:\msys64\usr\bin
@@ -44,4 +51,11 @@ if errorlevel 1 (
 
 echo.
 echo Build complete. Executable in build\bin\
+
+echo [Restore] Restoring configuration and memory files from backup...
+if exist temp_backup\promptslut.profile copy temp_backup\promptslut.profile build\bin\ /y >nul
+if exist temp_backup\promptslut.key copy temp_backup\promptslut.key build\bin\ /y >nul
+if exist temp_backup\promptslut.dict copy temp_backup\promptslut.dict build\bin\ /y >nul
+if exist temp_backup rmdir /s /q temp_backup
+
 pause
