@@ -501,54 +501,65 @@ void QtUiApp::handleSend() {
         }
     }
 
-    // Build messages including dynamic user memory profile & full conversation history
+    // 1. THE IMMUTABLE HEADER (Top of the string)
+    // Base System Instructions and Tool Schemas (Never changes)
     std::string base_prompt = load_system_prompt_from_file();
-    
-    std::string system_prompt = base_prompt + "\n\n"
-                                "CRITICAL SYSTEM CONSTRAINTS AND CONTEXT:\n"
-                                "- CURRENT REAL-TIME TEMPORAL CONTEXT: Today is " + std::string(date_buf) + ", and the current system time is " + std::string(time_buf) + ".\n"
-                                "- CURRENT SYSTEM TIMESTAMP (ISO 8601 format required for schedule_reminder): " + std::string(iso_buf) + "\n";
+    std::string system_prompt = base_prompt;
 
     if (name_known) {
-        system_prompt += "- You KNOW the following personal details about the user:\n"
+        system_prompt += "\n\n- You KNOW the following personal details about the user:\n"
                          "[USER PROFILE MEMORY]\n" + m_user_profile + "\n\n"
                          "- ALWAYS address the user by their name naturally in conversation!\n"
                          "- Actively build on and reference their profile facts whenever relevant, without being overly pushy.";
     } else {
         // If profile exists but name is not known, load the partial facts, but still enforce name-gathering
         if (!m_user_profile.empty()) {
-            system_prompt += "- You KNOW the following partial details about the user:\n"
+            system_prompt += "\n\n- You KNOW the following partial details about the user:\n"
                              "[USER PROFILE MEMORY]\n" + m_user_profile + "\n\n";
         }
-        system_prompt += "- You DO NOT know the user's name yet.\n"
+        system_prompt += "\n\n- You DO NOT know the user's name yet.\n"
                          "- You MUST IMMEDIATELY and politely ask for their name in your very next response (e.g., 'By the way, before we dive in, I'd love to know your name so I can address you personally!') so you can remember it and build a personal connection.\n"
                          "- THIS IS A MANDATORY CONSTRAINT. DO NOT FORGET TO ASK FOR THEIR NAME IMMEDIATELY.";
     }
 
-    // Append file attachment summary if present
-    if (!m_attached_file_summary.empty()) {
-        system_prompt += "\n\n[ATTACHED FILE SUMMARY: " + m_attached_file_name + "]\n" + m_attached_file_summary;
-    }
-
-    if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
-        std::string digest = m_sessions[m_current_session_index].memory_digest;
-        if (!digest.empty()) {
-             system_prompt += "\n\n[ARCHIVED CONVERSATION MEMORY DIGEST]\n"
-                              "Below is a high-density consolidated digest of the older conversation history that has been trimmed for context space:\n" + digest + "\n\n"
-                              "- If you ever need the exact raw text or complete details of what was discussed, you can use the 'file' tool with op='read' to read from the archive file: \"sessions/archive_" + m_sessions[m_current_session_index].id + ".md\".\n";
-        }
-    }
-
-    if (!m_pending_chronos_instruction.empty()) {
-        system_prompt += "\n\n[URGENT ACTIVE REMINDER CONTEXT]\n" + m_pending_chronos_instruction + "\n";
-        m_pending_chronos_instruction.clear();
-    }
-
     std::vector<nlohmann::json> messages;
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
+
+    // 2. THE LINEAR STREAM (Middle of the string)
+    // Loop through and append our raw Hot Zone turns from m_conversation.
+    // This grows linearly from left to right, keeping the history byte-stable across turns.
     for (auto& msg : m_conversation) {
         messages.push_back(msg);
     }
+
+    // 3. THE VOLATILE TAIL ZONE (Bottom of the string, right before user input)
+    // Append our real-time clock, temporal context strings, and memory digest.
+    std::string tail_prompt = "CRITICAL SYSTEM CONSTRAINTS AND CONTEXT:\n"
+                              "- CURRENT REAL-TIME TEMPORAL CONTEXT: Today is " + std::string(date_buf) + ", and the current system time is " + std::string(time_buf) + ".\n"
+                              "- CURRENT SYSTEM TIMESTAMP (ISO 8601 format required for schedule_reminder): " + std::string(iso_buf) + "\n";
+
+    // Append file attachment summary if present
+    if (!m_attached_file_summary.empty()) {
+        tail_prompt += "\n[ATTACHED FILE SUMMARY: " + m_attached_file_name + "]\n" + m_attached_file_summary + "\n";
+    }
+
+    // Append Memory Digest
+    if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
+        std::string digest = m_sessions[m_current_session_index].memory_digest;
+        if (!digest.empty()) {
+             tail_prompt += "\n[ARCHIVED CONVERSATION MEMORY DIGEST]\n"
+                            "Below is a high-density consolidated digest of the older conversation history that has been trimmed for context space:\n" + digest + "\n\n"
+                            "- If you ever need the exact raw text or complete details of what was discussed, you can use the 'file' tool with op='read' to read from the archive file: \"sessions/archive_" + m_sessions[m_current_session_index].id + ".md\".\n";
+        }
+    }
+
+    // Append Chronos active reminder
+    if (!m_pending_chronos_instruction.empty()) {
+        tail_prompt += "\n[URGENT ACTIVE REMINDER CONTEXT]\n" + m_pending_chronos_instruction + "\n";
+        m_pending_chronos_instruction.clear();
+    }
+
+    messages.push_back({{"role", "system"}, {"content", tail_prompt}});
 
     nlohmann::json content_node;
     if (m_pending_image_has_match) {
