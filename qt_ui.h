@@ -337,6 +337,7 @@ public:
     // Chronos Engine System
     ChronosEngine* m_chronos_engine = nullptr;
     std::string m_pending_chronos_instruction;
+    bool m_hide_next_user_message_from_ui = false;
 
     // File Attachment & Image Attachment states
     std::string m_attached_file_name;

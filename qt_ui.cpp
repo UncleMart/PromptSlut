@@ -456,12 +456,16 @@ void QtUiApp::handleSend() {
         }
     }
 
-    // Append user message directly to our rich chat history
-    ChatBlock user_block;
-    user_block.role = "user";
-    user_block.content = utf8_text;
-    m_chat_history.push_back(user_block);
-    rebuildChatDisplay();
+    // Append user message directly to our rich chat history if not explicitly hidden (e.g. for proactive systemic triggers)
+    if (m_hide_next_user_message_from_ui) {
+        m_hide_next_user_message_from_ui = false;
+    } else {
+        ChatBlock user_block;
+        user_block.role = "user";
+        user_block.content = utf8_text;
+        m_chat_history.push_back(user_block);
+        rebuildChatDisplay();
+    }
 
     m_input_field->clear();
 
@@ -1952,6 +1956,7 @@ void QtUiApp::handleChronosEvent(const ChronosTask& task) {
     QString automatedPrompt = QString("[SYSTEM ALERT: The clock timer hit zero. It is now time to remind the user about the following event: \"%1\". Actively formulate a friendly, conversational reminder response directly to Marty to remind him of this event. Keep your response helpful, natural, and friendly.]")
                               .arg(task.userContext);
 
+    m_hide_next_user_message_from_ui = true;
     m_input_field->setPlainText(automatedPrompt);
     handleSend();
 }
