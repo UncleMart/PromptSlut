@@ -1,10 +1,10 @@
-# PromptSlut (v0.84)
+# PromptSlut (v0.85)
 
 PromptSlut is a native, highly optimized C++ and Qt6 frontend designed to connect to any OpenAI-compatible endpoint. It is paired with an integrated local Python voice engine for always-on assistant voice loops and includes an Android companion project (Promptslutette) so you can run a local, lightweight vector model on a spare phone for memory storage and code analysis.
 
 This project focuses on keeping everything local, private, and running directly on your own system. It was designed to run Qwen 3.6 35B A3B as the main desktop model, and Qwen 3.5 0.8B for the mobile phone model, though any OpenAI-compatible API endpoint or local model of your choice can be easily configured.
 
-We are currently at v0.84, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
+We are currently at v0.85, representing a highly functional release that is actively being polished and tweaked toward a 1.0 release.
 
 > **Personal Note and Disclosure**
 > 
@@ -40,6 +40,11 @@ The voice system features built-in subtractive gating and Acoustic Echo Cancella
 
 ### Dynamic User Profile Memory System
 PromptSlut features an active user memory consolidation system. Between turns, the secondary model runs lightweight profile-extraction prompts to extract permanent personal facts about you (such as your name, preferences, likes, and dislikes). These are merged with your existing memory profile, allowing the assistant to become increasingly friendly, personal, and knowledgeable about you over time.
+
+### Proactive Schedulers & Background File-Watching (New in v0.85)
+The engine has been upgraded with a thread-safe proactive scheduler and recursive Win32 file tracking capabilities:
+- **Proactive Timer Scheduler (`ChronosEngine`)**: Schedule time-based reminders or deferred tasks using tool calls. When a timer hits zero, the C++ thread wakes up, compiles a system-alert instruction context, and programmatically submits it—silently hiding the prompt block from your visual chat list for a completely seamless, proactive verbal/textual reminder out of thin air!
+- **Asynchronous Recursive File-Watcher (`ProjectWatcher`)**: Built on the native Win32 `ReadDirectoryChangesW` API, this worker thread system recursively monitors and scans source and text file saves (`.cpp`, `.h`, `.py`, `.md`, `.txt`) in the active workspace with 0ms GUI lag. It features a robust gatekeeper to prevent directory traversal and accidental indexing of system root paths.
 
 ### Direct OS Automation & Real-Time Face Learning (New in v0.84)
 The tool calling ecosystem has been expanded to support physical desktop interaction and cognitive vision learning:

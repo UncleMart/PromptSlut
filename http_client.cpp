@@ -87,7 +87,13 @@ nlohmann::json HttpForwarder::chat_completion(
     std::cout << "[DEBUG CLIENT] parsing response..." << std::endl;
 
     // Check if the response is an event stream (which happens on some mobile deployments like Pixel 10!)
-    if (response.find("data:") != std::string::npos) {
+    bool is_json = false;
+    size_t first_char = response.find_first_not_of(" \t\r\n");
+    if (first_char != std::string::npos && response[first_char] == '{') {
+        is_json = true;
+    }
+
+    if (!is_json && response.find("data:") != std::string::npos) {
         std::cout << "[DEBUG CLIENT] detected text/event-stream response, reconstructing JSON..." << std::endl;
         std::string accumulated_content;
         std::string reasoning_content;
@@ -119,6 +125,8 @@ nlohmann::json HttpForwarder::chat_completion(
                         }
                         if (delta_obj.contains("reasoning_content") && !delta_obj["reasoning_content"].is_null()) {
                             reasoning_content += delta_obj["reasoning_content"].get<std::string>();
+                        } else if (delta_obj.contains("reasoning") && !delta_obj["reasoning"].is_null()) {
+                            reasoning_content += delta_obj["reasoning"].get<std::string>();
                         }
                     }
                 }
@@ -239,6 +247,11 @@ void HttpForwarder::chat_completion_stream(
                         if (delta_obj.contains("reasoning_content") && !delta_obj["reasoning_content"].is_null())
                         {
                             std::string content = delta_obj["reasoning_content"].get<std::string>();
+                            if (on_chunk) on_chunk(content);
+                        }
+                        else if (delta_obj.contains("reasoning") && !delta_obj["reasoning"].is_null())
+                        {
+                            std::string content = delta_obj["reasoning"].get<std::string>();
                             if (on_chunk) on_chunk(content);
                         }
                         if (delta_obj.contains("tool_calls") && !delta_obj["tool_calls"].is_null())

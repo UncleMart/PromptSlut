@@ -385,10 +385,27 @@ void Worker::process_request(const Request& req)
         if (resp.contains("choices") && !resp["choices"].empty())
         {
             auto& msg = resp["choices"][0]["message"];
-            if (msg.contains("content"))
+            if (msg.contains("content") && !msg["content"].is_null())
             {
                 final_content = msg["content"].get<std::string>();
                 messages.push_back(msg);
+            }
+            else
+            {
+                messages.push_back(msg);
+            }
+
+            // Fallback: If final_content is empty, check reasoning fields so the user sees the output!
+            if (final_content.empty())
+            {
+                if (msg.contains("reasoning_content") && !msg["reasoning_content"].is_null())
+                {
+                    final_content = msg["reasoning_content"].get<std::string>();
+                }
+                else if (msg.contains("reasoning") && !msg["reasoning"].is_null())
+                {
+                    final_content = msg["reasoning"].get<std::string>();
+                }
             }
         }
         break;
