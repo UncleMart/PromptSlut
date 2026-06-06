@@ -167,6 +167,7 @@ void QtUiApp::setupLayout() {
     m_chat_display->setTextInteractionFlags(Qt::TextBrowserInteraction);
     m_chat_display->setStyleSheet("background-color: transparent; border: none; color: #d4d4d4; font-size: 14px; padding: 15px;");
     connect(m_chat_display, &QTextBrowser::anchorClicked, this, &QtUiApp::handleAnchorClicked);
+    m_chat_display->installEventFilter(this);
     chat_grid->addWidget(m_chat_display, 0, 0);
 
     chat_layout->addWidget(chat_area_container);
@@ -1704,8 +1705,8 @@ void QtUiApp::dragEnterEvent(QDragEnterEvent* event) {
 }
 
 bool QtUiApp::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == m_input_field) {
-        if (event->type() == QEvent::KeyPress) {
+    if (obj == m_input_field || obj == m_chat_display) {
+        if (event->type() == QEvent::KeyPress && obj == m_input_field) {
             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
             if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
                 if (keyEvent->modifiers() & Qt::ShiftModifier) {
