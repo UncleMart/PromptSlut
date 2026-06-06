@@ -1948,7 +1948,11 @@ void QtUiApp::handleChronosEvent(const ChronosTask& task) {
         handleVoiceToggle(true);
     }
 
-    m_input_field->setPlainText(task.userContext);
+    // Format the automated user prompt so the model knows it is acting on a system/clock reminder trigger!
+    QString automatedPrompt = QString("[SYSTEM ALERT: The clock timer hit zero. It is now time to remind the user about the following event: \"%1\". Actively formulate a friendly, conversational reminder response directly to Marty to remind him of this event. Keep your response helpful, natural, and friendly.]")
+                              .arg(task.userContext);
+
+    m_input_field->setPlainText(automatedPrompt);
     handleSend();
 }
 
