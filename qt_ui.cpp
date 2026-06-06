@@ -71,10 +71,14 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     m_matrix_widget->setTheme(m_rain_theme_idx);
     queryActiveModel();
     handleVoiceToggle(m_voice_mode_enabled);
-    updateWorkspaceLabel();
 
     m_chronos_engine = new ChronosEngine(this);
     connect(m_chronos_engine, &ChronosEngine::eventTriggered, this, &QtUiApp::handleChronosEvent);
+
+    m_project_watcher = new ProjectWatcher(this);
+    connect(m_project_watcher, &ProjectWatcher::fileChangedOrDiscovered, this, &QtUiApp::handleFileChangedOrDiscovered);
+
+    updateWorkspaceLabel();
 
     // Load existing sessions from disk or start with a fresh one if empty
     load_all_sessions_from_disk();
@@ -1430,6 +1434,9 @@ void QtUiApp::handleRenameSession(int row) {
 void QtUiApp::updateWorkspaceLabel() {
     std::string ws_path = get_workspace_directory().string();
     m_stat_workspace->setText(QString("Workspace: %1").arg(QString::fromStdString(ws_path)));
+    if (m_project_watcher) {
+        m_project_watcher->setWorkingDirectory(QString::fromStdString(ws_path));
+    }
 }
 
 void QtUiApp::triggerContextConsolidationAndTrimming() {
@@ -1959,6 +1966,13 @@ void QtUiApp::handleChronosEvent(const ChronosTask& task) {
     m_hide_next_user_message_from_ui = true;
     m_input_field->setPlainText(automatedPrompt);
     handleSend();
+}
+
+void QtUiApp::handleFileChangedOrDiscovered(const QString &filePath, const QString &content) {
+    qDebug() << "[ProjectWatcher] File changed or discovered:" << filePath << "Size:" << content.length() << "chars";
+    
+    // In future versions, this hook will serialize the content, run local vector embedding calculations,
+    // and broadcast the JSON socket chunks directly to the Android companion client (Promptslutette).
 }
 
 void QtUiApp::handleVoiceToggle(bool checked) {

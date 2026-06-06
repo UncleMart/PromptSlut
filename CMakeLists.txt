@@ -28,6 +28,7 @@ set(SOURCES
     tool_router.cpp
     tools.cpp
     ChronosEngine.cpp
+    ProjectWatcher.cpp
     resources.rc
 )
 

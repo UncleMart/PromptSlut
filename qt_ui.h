@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include "ChronosEngine.h"
+#include "ProjectWatcher.h"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -213,6 +214,7 @@ private slots:
     void handleMicReleased();
     void handleTranscriptionReady(const QString& text);
     void handleChronosEvent(const ChronosTask& task);
+    void handleFileChangedOrDiscovered(const QString &filePath, const QString &content);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -338,6 +340,9 @@ public:
     ChronosEngine* m_chronos_engine = nullptr;
     std::string m_pending_chronos_instruction;
     bool m_hide_next_user_message_from_ui = false;
+
+    // Project Watcher Subsystem
+    ProjectWatcher* m_project_watcher = nullptr;
 
     // File Attachment & Image Attachment states
     std::string m_attached_file_name;
