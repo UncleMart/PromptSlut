@@ -1235,10 +1235,10 @@ void QtUiApp::saveCurrentSessionState() {
             m_sidebar->setCurrentRow(m_current_session_index);
 
             // Trigger background LLM task to summarize the prompt into a professional short title!
-            std::string host = m_host_val;
-            int port = m_port_val;
-            std::string api_key = m_apikey_val;
-            std::string model = m_model_val;
+            std::string host = m_use_secondary_model ? m_sec_host_val : m_host_val;
+            int port = m_use_secondary_model ? m_sec_port_val : m_port_val;
+            std::string api_key = m_use_secondary_model ? m_sec_apikey_val : m_apikey_val;
+            std::string model = m_use_secondary_model ? m_sec_model_val : m_model_val;
             int session_idx = m_current_session_index;
 
             std::vector<nlohmann::json> title_messages;
