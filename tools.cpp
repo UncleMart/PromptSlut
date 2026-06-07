@@ -118,22 +118,23 @@ static void prepare_shell_path() {
     DWORD len = GetEnvironmentVariableW(L"PATH", path_buf, 32767);
     if (len > 0) {
         std::wstring path_str(path_buf, len);
+        std::error_code ec;
         
         std::wstring msys_ucrt = L"C:\\msys64\\ucrt64\\bin";
-        if (!std::filesystem::exists(msys_ucrt)) {
+        if (!std::filesystem::exists(msys_ucrt, ec)) {
             msys_ucrt = L"C:\\msys64.bak\\ucrt64\\bin";
         }
         
         std::wstring msys_usr = L"C:\\msys64\\usr\\bin";
-        if (!std::filesystem::exists(msys_usr)) {
+        if (!std::filesystem::exists(msys_usr, ec)) {
             msys_usr = L"C:\\msys64.bak\\usr\\bin";
         }
 
         std::wstring new_path;
-        if (std::filesystem::exists(msys_ucrt)) {
+        if (std::filesystem::exists(msys_ucrt, ec)) {
             new_path += msys_ucrt + L";";
         }
-        if (std::filesystem::exists(msys_usr)) {
+        if (std::filesystem::exists(msys_usr, ec)) {
             new_path += msys_usr + L";";
         }
         
