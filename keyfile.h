@@ -43,7 +43,7 @@ inline std::string xor_decode(const std::string& encoded)
 inline bool save_all_settings(
     const std::string& bearer, const std::string& serper, const std::string& host, int port, const std::string& model, bool matrix,
     bool use_sec, const std::string& sec_host, int sec_port, const std::string& sec_bearer, const std::string& sec_model,
-    int rain_theme_idx, bool voice_enabled, const std::string& tts_voice) 
+    int rain_theme_idx, bool voice_enabled, const std::string& tts_voice, int max_tool_calls) 
 {
     std::string exe_path = std::filesystem::current_path().string() + "/" + KEY_FILE_NAME;
     std::ofstream f(exe_path, std::ios::binary);
@@ -62,19 +62,20 @@ inline bool save_all_settings(
     f << xor_encode(std::to_string(rain_theme_idx)) << "\n";
     f << xor_encode(voice_enabled ? "1" : "0") << "\n";
     f << xor_encode(tts_voice) << "\n";
+    f << xor_encode(std::to_string(max_tool_calls)) << "\n";
     return true;
 }
 
 inline bool load_all_settings(
     std::string& bearer, std::string& serper, std::string& host, int& port, std::string& model, bool& matrix,
     bool& use_sec, std::string& sec_host, int& sec_port, std::string& sec_bearer, std::string& sec_model,
-    int& rain_theme_idx, bool& voice_enabled, std::string& tts_voice) 
+    int& rain_theme_idx, bool& voice_enabled, std::string& tts_voice, int& max_tool_calls) 
 {
     std::string exe_path = std::filesystem::current_path().string() + "/" + KEY_FILE_NAME;
     std::ifstream f(exe_path, std::ios::binary);
     if (!f.is_open()) return false;
 
-    std::string line1, line2, line3, line4, line5, line6, line7, line8, line9, line10, line11, line12, line13, line14;
+    std::string line1, line2, line3, line4, line5, line6, line7, line8, line9, line10, line11, line12, line13, line14, line15;
     if (!std::getline(f, line1) || !std::getline(f, line2)) return false;
 
     bearer = xor_decode(line1);
@@ -118,6 +119,10 @@ inline bool load_all_settings(
 
     if (std::getline(f, line14)) tts_voice = xor_decode(line14);
     else tts_voice = "af_maple";
+
+    if (std::getline(f, line15)) {
+        try { max_tool_calls = std::stoi(xor_decode(line15)); } catch (...) { max_tool_calls = 20; }
+    } else max_tool_calls = 20;
 
     return true;
 }

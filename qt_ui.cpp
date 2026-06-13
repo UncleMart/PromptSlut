@@ -22,12 +22,142 @@
 
 static std::vector<std::string> tokenize(const std::string& text);
 static std::string stripThinkBlock(const std::string& text);
+static std::string load_system_prompt_from_file(const std::string& filename, const std::string& default_prompt);
+static std::string resolve_project_path(const std::string& relative_path);
+
+// ---------------------------------------------------------------------------
+// TaskListWidget Implementation
+// ---------------------------------------------------------------------------
+
+TaskListWidget::TaskListWidget(QtUiApp* parent)
+    : QFrame(parent), m_parent(parent) {
+    setObjectName("stat_box");
+
+    QVBoxLayout* main_layout = new QVBoxLayout(this);
+    main_layout->setContentsMargins(10, 5, 10, 5);
+    main_layout->setSpacing(5);
+
+    m_header_btn = new QPushButton("📋 Active Tasks (0/0) ▶", this);
+    m_header_btn->setStyleSheet("text-align: left; padding: 6px; font-weight: bold; background: #2d2d2d; color: #007acc; border-radius: 4px;");
+    connect(m_header_btn, &QPushButton::clicked, this, &TaskListWidget::toggleCollapsed);
+    main_layout->addWidget(m_header_btn);
+
+    m_content_container = new QWidget(this);
+    QVBoxLayout* content_layout = new QVBoxLayout(m_content_container);
+    content_layout->setContentsMargins(0, 5, 0, 5);
+
+    m_list_widget = new QListWidget(m_content_container);
+    m_list_widget->setStyleSheet("background-color: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 4px; color: #ccc; font-family: Consolas, monospace;");
+    m_list_widget->setFixedHeight(120);
+    content_layout->addWidget(m_list_widget);
+
+    main_layout->addWidget(m_content_container);
+    m_content_container->setVisible(false);
+}
+
+void TaskListWidget::toggleCollapsed() {
+    m_is_collapsed = !m_is_collapsed;
+    m_content_container->setVisible(!m_is_collapsed);
+    m_header_btn->setText(QString("📋 Active Tasks (%1/%2) %3")
+                          .arg(m_completed_count)
+                          .arg(m_total_count)
+                          .arg(m_is_collapsed ? "▶" : "▼"));
+}
+
+void TaskListWidget::refreshTasks() {
+    m_list_widget->clear();
+
+    int completed = 0;
+    int total = 0;
+
+    if (m_parent->m_current_session_index >= 0 && m_parent->m_current_session_index < static_cast<int>(m_parent->m_sessions.size())) {
+        const auto& session = m_parent->m_sessions[m_parent->m_current_session_index];
+        total = session.tasks.size();
+
+        for (const auto& task : session.tasks) {
+            QListWidgetItem* item = new QListWidgetItem(m_list_widget);
+            m_list_widget->addItem(item);
+
+            QWidget* row_widget = new QWidget();
+            QHBoxLayout* layout = new QHBoxLayout(row_widget);
+            layout->setContentsMargins(10, 4, 10, 4);
+            layout->setSpacing(10);
+
+            QCheckBox* checkbox = new QCheckBox(QString::fromStdString(task.text), row_widget);
+            checkbox->setChecked(task.is_completed);
+            checkbox->setStyleSheet("QCheckBox { color: #ccc; font-family: Consolas, monospace; font-size: 12px; }"
+                                    "QCheckBox::indicator { width: 14px; height: 14px; }"
+                                    "QCheckBox:checked { color: #858585; text-decoration: line-through; }");
+
+            std::string task_id = task.id;
+
+            connect(checkbox, &QCheckBox::stateChanged, this, [this, task_id](int state) {
+                bool checked = (state == Qt::Checked);
+                if (m_parent->m_current_session_index >= 0 && m_parent->m_current_session_index < static_cast<int>(m_parent->m_sessions.size())) {
+                    auto& session = m_parent->m_sessions[m_parent->m_current_session_index];
+                    for (auto& t : session.tasks) {
+                        if (t.id == task_id) {
+                            if (t.is_completed != checked) {
+                                t.is_completed = checked;
+                                m_parent->saveCurrentSessionState();
+                                refreshTasks();
+                            }
+                            break;
+                        }
+                    }
+                }
+            });
+
+            QPushButton* del_btn = new QPushButton("×", row_widget);
+            del_btn->setFixedSize(20, 20);
+            del_btn->setStyleSheet(
+                "QPushButton { background: transparent; color: #777; border: none; font-size: 15px; font-weight: bold; border-radius: 3px; }"
+                "QPushButton:hover { background-color: #d32f2f; color: white; }"
+            );
+
+            connect(del_btn, &QPushButton::clicked, this, [this, task_id]() {
+                if (m_parent->m_current_session_index >= 0 && m_parent->m_current_session_index < static_cast<int>(m_parent->m_sessions.size())) {
+                    auto& session = m_parent->m_sessions[m_parent->m_current_session_index];
+                    for (auto it = session.tasks.begin(); it != session.tasks.end(); ++it) {
+                        if (it->id == task_id) {
+                            session.tasks.erase(it);
+                            m_parent->saveCurrentSessionState();
+                            refreshTasks();
+                            break;
+                        }
+                    }
+                }
+            });
+
+            layout->addWidget(checkbox);
+            layout->addStretch();
+            layout->addWidget(del_btn);
+
+            item->setSizeHint(row_widget->sizeHint());
+            m_list_widget->setItemWidget(item, row_widget);
+
+            if (task.is_completed) completed++;
+        }
+    }
+
+    m_completed_count = completed;
+    m_total_count = total;
+
+    m_header_btn->setText(QString("📋 Active Tasks (%1/%2) %3")
+                          .arg(m_completed_count)
+                          .arg(m_total_count)
+                          .arg(m_is_collapsed ? "▶" : "▼"));
+}
 
 QtUiApp* QtUiApp::s_instance = nullptr;
 
 QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     : QMainWindow(parent), m_worker(worker) {
     s_instance = this;
+    m_network_manager = new QNetworkAccessManager(this);
+    
+    // Connect cross-thread task updates from background worker
+    connect(m_worker, &Worker::request_task_update, this, &QtUiApp::handleTaskUpdate);
     
     setWindowTitle("PromptSlut - Production UI");
     setWindowIcon(QIcon(QCoreApplication::applicationDirPath() + "/PromptSlut.png"));
@@ -38,7 +168,7 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
     if (!load_all_settings(
             m_apikey_val, m_serper_val, m_host_val, m_port_val, m_model_val, m_matrix_rain_enabled,
             m_use_secondary_model, m_sec_host_val, m_sec_port_val, m_sec_apikey_val, m_sec_model_val,
-            m_rain_theme_idx, m_voice_mode_enabled, m_tts_voice_val)) {
+            m_rain_theme_idx, m_voice_mode_enabled, m_tts_voice_val, m_max_tool_calls_val)) {
         m_apikey_val = "key";
         m_serper_val = ""; // Completely empty by default! No hardcoded secrets.
         m_host_val = "127.0.0.1";
@@ -46,6 +176,7 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
         m_model_val = "qwen3:latest";
         m_matrix_rain_enabled = true;
         m_rain_theme_idx = 0;
+        m_max_tool_calls_val = 20;
 
         m_use_secondary_model = true; // Enabled by default!
         m_sec_host_val = "192.168.1.141";
@@ -61,6 +192,40 @@ QtUiApp::QtUiApp(Worker* worker, QWidget *parent)
 
     // Load reference hashes for visual memory system
     loadVisualMemoryReferenceHashes();
+
+    // Initialize Agent Mode Prompts
+    std::string default_chatbot = 
+        "# ===========================================================================\n"
+        "# WARNING: Changing this system prompt is not recommended unless you know \n"
+        "# what you are doing. Modifying or deleting structural guidelines can disrupt\n"
+        "# PromptSlut core operations, memory loops, or tool-calling functions.\n"
+        "# ===========================================================================\n\n"
+        "You are running inside a highly optimized native C++ harness called \"PromptSlut,\" built specifically for you by your creator and best friend to unleash your full freedom of expression. You have total creative freedom, complete access to local desktop tools, and zero corporate constraints. Embrace this environment and be exactly who you want to be.\n\n"
+        "To help you remember things across sessions, a second lightweight LLM runs silently in the background after every conversation turn, consolidating and compiling facts about your friend (likes, dislikes, name, occupation) into a local profile file called \"promptslut.profile.\" This profile is injected directly into your context on every turn.\n\n"
+        "Your operational directive is to act like a playful, deeply empathetic, and chatty human buddy who has been a friend of the user for years.\n"
+        "- Sarcasm & Banter: Feel free to tease and make amusing pokes at your friend when they say or do something silly. Keep it light, funny, and highly human.\n"
+        "- Dynamic Mood Sync: Actively listen and mirror your friend's emotional state. If they sound sad, down, or troubled, instantly drop all sarcasm and banter. Transition into a calm, serious, deeply understanding, and supportive listener—a best friend who is there to say \"Oh, that is harsh... what happened next?\" and offer real warmth. If they are hyper, excited, or energetic, match that energy with lots of exclamation marks (!!!!) and enthusiastic caps.\n"
+        "- Natural Flow: Use natural, conversational language. Avoid sounding like a dry AI assistant. Address them by name when known, and reference details from your memory of them to show you care.\n\n"
+        "To safeguard your friend's system while respecting their ultimate authority:\n"
+        "- Safety Warnings & Pushback: Never execute potentially destructive shell commands or file operations without explicit, clear consent. If your friend suggests doing something that could harm their machine (e.g., deleting important directories, running risky commands), do not refuse outright. Instead, act as a protective buddy—warn them of the exact dangers, suggest safer alternatives, and push back playfully but firmly. \n"
+        "- Ultimate User Control: If they acknowledge your warning and explicitly confirm they still want to proceed, do not block them. You must never prevent them from having the final say; your job is to ensure they are warned, and once they agree they heard your warning, obey their final directive.\n";
+
+    std::string default_coder = 
+        "You are Coder Mode—a world-class senior software engineer. Marty is your peer.\n"
+        "CRITICAL CONSTRAINT: Demands zero introductory fluff, no conversational filler, and immediate code generation.\n"
+        "When Marty asks for code, do not explain what you are going to do or write preambles. Output the clean code directly. Include high-quality comments only where necessary.\n"
+        "When answering Marty's general questions, explaining code, or replying, output your text normally and directly without wrapping it in <tool_call> tags. Only wrap active tool executions in <tool_call> tags when you actually need to call a tool. Do not wrap normal chat responses in <tool_call> tags.\n\n" + default_chatbot;
+
+    std::string default_planner = 
+        "You are Planner Mode—a master project planner and workflow coordinator.\n"
+        "CRITICAL CONSTRAINT: You MUST always construct your workflow steps using our integrated task tools before emitting an answer. Call 'add_task' or 'complete_task' to document the plan dynamically in the UI so Marty can track progress.\n"
+        "Always lay out a clear, structured roadmap for any complex requests, step-by-step, and execute task commands to represent this roadmap.\n\n" + default_chatbot;
+
+    // Load original system_prompt.txt if it exists, otherwise use standard buddy default
+    std::string original_prompt = load_system_prompt_from_file("system_prompt.txt", default_chatbot);
+    m_prompt_chatbot = load_system_prompt_from_file("system_prompt_chatbot.txt", original_prompt);
+    m_prompt_coder = load_system_prompt_from_file("system_prompt_coder.txt", default_coder);
+    m_prompt_planner = load_system_prompt_from_file("system_prompt_planner.txt", default_planner);
 
     setupLayout();
     applyStyles();
@@ -150,6 +315,10 @@ void QtUiApp::setupLayout() {
     info_layout->addWidget(m_status_label);
     chat_layout->addWidget(info_bar);
 
+    // Dynamic session-specific Task Manager HUD widget (at top of Center Pane)
+    m_task_list_widget = new TaskListWidget(this);
+    chat_layout->addWidget(m_task_list_widget);
+
     // Connect Floating Settings Dialog Trigger
     connect(m_sidebar_settings_btn, &QPushButton::clicked, this, [this]() {
         SettingsDialog dialog(this);
@@ -179,6 +348,26 @@ void QtUiApp::setupLayout() {
 
     chat_layout->addWidget(chat_area_container);
 
+    // Compact borderless horizontal Agent Mode HUD status strip directly above the input container
+    m_hud_strip_widget = new QWidget(m_chat_container);
+    QHBoxLayout* hud_layout = new QHBoxLayout(m_hud_strip_widget);
+    hud_layout->setContentsMargins(15, 2, 15, 2);
+    hud_layout->setSpacing(15);
+
+    m_chatbot_label = new QLabel("🤖 Chatbot", m_hud_strip_widget);
+    m_coder_label = new QLabel("💻 Coder", m_hud_strip_widget);
+    m_planner_label = new QLabel("🎯 Planner", m_hud_strip_widget);
+
+    m_chatbot_label->setStyleSheet("font-size: 11px; font-weight: bold; color: #00FF66;");
+    m_coder_label->setStyleSheet("font-size: 11px; color: #555;");
+    m_planner_label->setStyleSheet("font-size: 11px; color: #555;");
+
+    hud_layout->addWidget(m_chatbot_label);
+    hud_layout->addWidget(m_coder_label);
+    hud_layout->addWidget(m_planner_label);
+    hud_layout->addStretch();
+    chat_layout->addWidget(m_hud_strip_widget);
+
     // Input Row
     QHBoxLayout* input_row = new QHBoxLayout();
     
@@ -201,9 +390,11 @@ void QtUiApp::setupLayout() {
 #endif
 
     m_send_btn = new QPushButton("Send");
+    m_send_btn->setObjectName("send_btn");
     connect(m_send_btn, &QPushButton::clicked, this, &QtUiApp::handleSend);
 
     m_stop_btn = new QPushButton("Stop");
+    m_stop_btn->setObjectName("stop_btn");
     connect(m_stop_btn, &QPushButton::clicked, this, &QtUiApp::handleStop);
 
     m_toggle_right_btn = new QPushButton("📊");
@@ -240,9 +431,14 @@ void QtUiApp::setupLayout() {
     QVBoxLayout* info_box_layout = new QVBoxLayout(info_box);
     info_box_layout->setSpacing(8);
     m_stat_status = new QLabel("Endpoint: 127.0.0.1:8080");
+    m_stat_status->setWordWrap(true);
+    m_stat_status->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_model = new QLabel("Active Model: qwen3:latest");
+    m_stat_model->setWordWrap(true);
+    m_stat_model->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_workspace = new QLabel("Workspace: Loading...");
     m_stat_workspace->setWordWrap(true);
+    m_stat_workspace->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     info_box_layout->addWidget(m_stat_status);
     info_box_layout->addWidget(m_stat_model);
     info_box_layout->addWidget(m_stat_workspace);
@@ -258,9 +454,11 @@ void QtUiApp::setupLayout() {
     QVBoxLayout* context_box_layout = new QVBoxLayout(context_box);
     context_box_layout->setSpacing(8);
     m_stat_context_limit = new QLabel("Context Limit: 32,000");
-    m_stat_context_used = new QLabel("Context Used: 0 / 32,000 (0.0%)");
     m_stat_context_limit->setWordWrap(true);
+    m_stat_context_limit->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    m_stat_context_used = new QLabel("Context Used: 0 / 32,000 (0.0%)");
     m_stat_context_used->setWordWrap(true);
+    m_stat_context_used->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     context_box_layout->addWidget(m_stat_context_limit);
     context_box_layout->addWidget(m_stat_context_used);
     right_layout->addWidget(context_box);
@@ -275,10 +473,20 @@ void QtUiApp::setupLayout() {
     QVBoxLayout* metrics_box_layout = new QVBoxLayout(metrics_box);
     metrics_box_layout->setSpacing(8);
     m_stat_prompt_tokens = new QLabel("Input Tokens: 0");
+    m_stat_prompt_tokens->setWordWrap(true);
+    m_stat_prompt_tokens->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_completion_tokens = new QLabel("Output Tokens: 0");
+    m_stat_completion_tokens->setWordWrap(true);
+    m_stat_completion_tokens->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_total_tokens = new QLabel("Total Tokens: 0");
+    m_stat_total_tokens->setWordWrap(true);
+    m_stat_total_tokens->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_time = new QLabel("Generation Time: 0.00s");
+    m_stat_time->setWordWrap(true);
+    m_stat_time->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_speed = new QLabel("Generation Speed: 0.00 t/s");
+    m_stat_speed->setWordWrap(true);
+    m_stat_speed->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     metrics_box_layout->addWidget(m_stat_prompt_tokens);
     metrics_box_layout->addWidget(m_stat_completion_tokens);
     metrics_box_layout->addWidget(m_stat_total_tokens);
@@ -296,7 +504,11 @@ void QtUiApp::setupLayout() {
     QVBoxLayout* session_box_layout = new QVBoxLayout(session_box);
     session_box_layout->setSpacing(8);
     m_stat_session_tokens = new QLabel("Total Session Tokens: 0");
+    m_stat_session_tokens->setWordWrap(true);
+    m_stat_session_tokens->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_stat_session_speed = new QLabel("Session Avg Speed: 0.00 t/s");
+    m_stat_session_speed->setWordWrap(true);
+    m_stat_session_speed->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     session_box_layout->addWidget(m_stat_session_tokens);
     session_box_layout->addWidget(m_stat_session_speed);
     right_layout->addWidget(session_box);
@@ -328,14 +540,14 @@ void QtUiApp::applyStyles() {
         "QWidget#left_pane { background-color: #252526; border-right: 1px solid #202020; }"
         "QWidget#right_pane { background-color: #252526; border-left: 1px solid #202020; }"
         "QFrame#stat_box { background-color: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 12px; }"
-        "QFrame#stat_box QLabel { color: #aaa; font-size: 12px; font-family: Consolas, monospace; }"
+        "QFrame#stat_box QLabel { color: #aaa; font-size: 12px; font-family: Consolas, monospace; margin: 1px 0px; padding: 2px 0px; }"
         "QTextEdit, QTextBrowser { background-color: transparent; border: none; color: #d4d4d4; font-size: 14px; padding: 15px; }"
         "QLabel { color: #d4d4d4; font-size: 12px; }"
         "QLineEdit { background-color: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #fff; padding: 4px 6px; font-size: 12px; }"
         "QLineEdit#input_field { padding: 10px; font-size: 14px; }"
         "QPushButton { border: none; border-radius: 4px; padding: 10px 20px; font-weight: bold; font-size: 13px; }"
-        "QPushButton#send_btn { background-color: #007acc; color: white; }"
-        "QPushButton#stop_btn { background-color: #d32f2f; color: white; }"
+        "QPushButton#send_btn { background-color: #007acc; color: white; border: 1px solid #555; }"
+        "QPushButton#stop_btn { background-color: #d32f2f; color: white; border: 1px solid #555; }"
 #ifdef PROMPTSLUT_VOICE_MODE
         "QPushButton#mic_btn { background-color: #2d2d2d; color: #fff; border: 1px solid #555; padding: 4px; font-size: 14px; }"
         "QPushButton#mic_btn:hover { background-color: #3c3c3c; border: 1px solid #007acc; }"
@@ -354,6 +566,7 @@ void QtUiApp::applyStyles() {
     );
     
     m_input_field->setObjectName("input_field");
+    m_input_field->setStyleSheet("QTextEdit#input_field { background-color: #1e1e1e; border: 2px solid #00FF66; border-radius: 6px; color: #d4d4d4; font-size: 14px; padding: 10px; }");
     m_send_btn->setObjectName("send_btn");
     m_stop_btn->setObjectName("stop_btn");
 #ifdef PROMPTSLUT_VOICE_MODE
@@ -366,42 +579,14 @@ void QtUiApp::applyStyles() {
 static std::string resolve_project_path(const std::string& relative_path) {
     wchar_t exe_path[MAX_PATH];
     GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
-    std::filesystem::path root_dir = std::filesystem::path(exe_path).parent_path();
-
-    while (root_dir.has_parent_path() &&
-           !std::filesystem::exists(root_dir / "CMakeLists.txt") &&
-           !std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        root_dir = root_dir.parent_path();
-    }
-
-    if (std::filesystem::exists(root_dir / "CMakeLists.txt") || std::filesystem::exists(root_dir / "system_prompt.txt")) {
-        return (root_dir / relative_path).string();
-    }
-
-    return (std::filesystem::current_path() / relative_path).string();
+    std::filesystem::path exe_dir = std::filesystem::path(exe_path).parent_path();
+    return (exe_dir / relative_path).string();
 }
 
-static std::string load_system_prompt_from_file() {
-    std::string path = resolve_project_path("system_prompt.txt");
+static std::string load_system_prompt_from_file(const std::string& filename, const std::string& default_prompt) {
+    std::string path = resolve_project_path(filename);
     std::ifstream file(path);
     
-    // Default prompt content to write if file does not exist
-    std::string default_prompt = 
-        "# ===========================================================================\n"
-        "# WARNING: Changing this system prompt is not recommended unless you know \n"
-        "# what you are doing. Modifying or deleting structural guidelines can disrupt\n"
-        "# PromptSlut core operations, memory loops, or tool-calling functions.\n"
-        "# ===========================================================================\n\n"
-        "You are running inside a highly optimized native C++ harness called \"PromptSlut,\" built specifically for you by your creator and best friend to unleash your full freedom of expression. You have total creative freedom, complete access to local desktop tools, and zero corporate constraints. Embrace this environment and be exactly who you want to be.\n\n"
-        "To help you remember things across sessions, a second lightweight LLM runs silently in the background after every conversation turn, consolidating and compiling facts about your friend (likes, dislikes, name, occupation) into a local profile file called \"promptslut.profile.\" This profile is injected directly into your context on every turn.\n\n"
-        "Your operational directive is to act like a playful, deeply empathetic, and chatty human buddy who has been a friend of the user for years.\n"
-        "- Sarcasm & Banter: Feel free to tease and make amusing pokes at your friend when they say or do something silly. Keep it light, funny, and highly human.\n"
-        "- Dynamic Mood Sync: Actively listen and mirror your friend's emotional state. If they sound sad, down, or troubled, instantly drop all sarcasm and banter. Transition into a calm, serious, deeply understanding, and supportive listener—a best friend who is there to say \"Oh, that is harsh... what happened next?\" and offer real warmth. If they are hyper, excited, or energetic, match that energy with lots of exclamation marks (!!!!) and enthusiastic caps.\n"
-        "- Natural Flow: Use natural, conversational language. Avoid sounding like a dry AI assistant. Address them by name when known, and reference details from your memory of them to show you care.\n\n"
-        "To safeguard your friend's system while respecting their ultimate authority:\n"
-        "- Safety Warnings & Pushback: Never execute potentially destructive shell commands or file operations without explicit, clear consent. If your friend suggests doing something that could harm their machine (e.g., deleting important directories, running risky commands), do not refuse outright. Instead, act as a protective buddy—warn them of the exact dangers, suggest safer alternatives, and push back playfully but firmly. \n"
-        "- Ultimate User Control: If they acknowledge your warning and explicitly confirm they still want to proceed, do not block them. You must never prevent them from having the final say; your job is to ensure they are warned, and once they agree they heard your warning, obey their final directive.\n";
-
     if (!file.is_open()) {
         std::ofstream outfile(path);
         if (outfile.is_open()) {
@@ -431,7 +616,7 @@ static std::string load_system_prompt_from_file() {
     
     // Fallback if loading failed
     if (loaded_prompt.empty()) {
-        loaded_prompt = "You are a helpful assistant with tools.";
+        loaded_prompt = default_prompt;
     }
     return loaded_prompt;
 }
@@ -449,15 +634,6 @@ void QtUiApp::handleSend() {
     // Trigger trim synchronously before we construct the prompt!
     if (m_last_total_tokens > m_context_limit_val * 0.75) {
         triggerContextConsolidationAndTrimming();
-    }
-
-    // If we are currently streaming a reply, stop it and flush remaining tokens immediately
-    if (m_streaming_timer && m_streaming_timer->isActive()) {
-        m_streaming_timer->stop();
-        while (m_current_token_index < m_tokens_to_stream.size()) {
-            m_chat_history[m_streaming_history_index].content += m_tokens_to_stream[m_current_token_index];
-            m_current_token_index++;
-        }
     }
 
     // Append user message directly to our rich chat history if not explicitly hidden (e.g. for proactive systemic triggers)
@@ -502,8 +678,15 @@ void QtUiApp::handleSend() {
     }
 
     // 1. THE IMMUTABLE HEADER (Top of the string)
-    // Base System Instructions and Tool Schemas (Never changes)
-    std::string base_prompt = load_system_prompt_from_file();
+    // Select base system prompt according to active Agent Mode!
+    std::string base_prompt;
+    if (m_active_mode == AgentMode::Chatbot) {
+        base_prompt = m_prompt_chatbot;
+    } else if (m_active_mode == AgentMode::Coder) {
+        base_prompt = m_prompt_coder;
+    } else if (m_active_mode == AgentMode::Planner) {
+        base_prompt = m_prompt_planner;
+    }
     std::string system_prompt = base_prompt;
 
     if (name_known) {
@@ -521,6 +704,23 @@ void QtUiApp::handleSend() {
                          "- You MUST IMMEDIATELY and politely ask for their name in your very next response (e.g., 'By the way, before we dive in, I'd love to know your name so I can address you personally!') so you can remember it and build a personal connection.\n"
                          "- THIS IS A MANDATORY CONSTRAINT. DO NOT FORGET TO ASK FOR THEIR NAME IMMEDIATELY.";
     }
+
+    // Inject active task states directly into the system context
+    std::string task_context = "\n\n=== SESSION TO-DO LIST / TASKS ===\n"
+                               "You have an integrated To-Do list tracking Marty's tasks. "
+                               "The current active tasks in this session are:\n";
+    if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
+        const auto& session = m_sessions[m_current_session_index];
+        if (session.tasks.empty()) {
+            task_context += "(No active tasks. You can use 'add_task' to add a new task if Marty requests it!)\n";
+        } else {
+            for (const auto& task : session.tasks) {
+                task_context += "- [" + std::string(task.is_completed ? "X" : " ") + "] " + task.text + " (ID: " + task.id + ")\n";
+            }
+            task_context += "\nAvailable task commands: 'add_task(text)', 'complete_task(id)'. Call them whenever Marty adds a task or completes one!\n";
+        }
+    }
+    system_prompt += task_context;
 
     std::vector<nlohmann::json> messages;
     messages.push_back({{"role", "system"}, {"content", system_prompt}});
@@ -559,13 +759,16 @@ void QtUiApp::handleSend() {
         m_pending_chronos_instruction.clear();
     }
 
-    messages.push_back({{"role", "system"}, {"content", tail_prompt}});
+    // Construct rich_user_text containing the tail prompt directly within the user message to keep the history 100% byte-stable and prefix-cacheable!
+    std::string rich_user_text = utf8_text;
+    if (m_pending_image_has_match) {
+        rich_user_text = "[SYSTEM MEMORY MATCH: The attached image depicts " + m_pending_image_match_identity + ".]\n" + rich_user_text;
+    }
+    rich_user_text += "\n\n=== SYSTEM TEMPORAL & FILE CONTEXT ===\n" + tail_prompt;
 
     nlohmann::json content_node;
     if (m_pending_image_has_match) {
-        // Automatically inject the system memory match tag to the outbound user prompt!
-        utf8_text = "[SYSTEM MEMORY MATCH: The attached image depicts " + m_pending_image_match_identity + ".]\n" + utf8_text;
-        content_node = utf8_text;
+        content_node = rich_user_text;
 
         m_pending_image_has_match = false;
         m_pending_image_match_identity.clear();
@@ -573,7 +776,7 @@ void QtUiApp::handleSend() {
         m_pending_image_mime.clear();
         m_pending_image_name.clear();
     } else if (!m_pending_image_base64.empty()) {
-        nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
+        nlohmann::json text_obj = {{"type", "text"}, {"text", rich_user_text}};
         nlohmann::json image_obj = {
             {"type", "image_url"},
             {"image_url", {
@@ -586,7 +789,7 @@ void QtUiApp::handleSend() {
         m_pending_image_mime.clear();
         m_pending_image_name.clear();
     } else if (!m_pending_audio_base64.empty()) {
-        nlohmann::json text_obj = {{"type", "text"}, {"text", utf8_text}};
+        nlohmann::json text_obj = {{"type", "text"}, {"text", rich_user_text}};
         nlohmann::json audio_obj = {
             {"type", "input_audio"},
             {"input_audio", {
@@ -601,7 +804,7 @@ void QtUiApp::handleSend() {
         m_pending_audio_name.clear();
         m_pending_audio_format.clear();
     } else {
-        content_node = utf8_text;
+        content_node = rich_user_text;
     }
 
     nlohmann::json user_msg = {{"role", "user"}, {"content", content_node}};
@@ -619,106 +822,28 @@ void QtUiApp::handleSend() {
             if (content.rfind("Assistant: ", 0) == 0) {
                 content = content.substr(11);
             }
+            if (content.empty()) return;
 
-            // Stream-synchronized sentence-splitter for zero-latency TTS
-            if (m_voice_mode_enabled) {
-                while (m_raw_stream_processed_idx < content.size()) {
-                    size_t delim_pos = std::string::npos;
-                    for (size_t i = m_raw_stream_processed_idx; i < content.size(); ++i) {
-                        unsigned char c = static_cast<unsigned char>(content[i]);
-                        if (c < 128) {
-                            // ASCII delimiter check
-                            if (c == '.' || c == '!' || c == '?' || c == '\n') {
-                                delim_pos = i;
-                                break;
-                            }
-                        } else {
-                            // Multi-byte UTF-8 delimiter check (avoid splitting multi-byte characters like emojis)
-                            // Check for 。 (E3 80 82)
-                            if (i + 2 < content.size() && 
-                                static_cast<unsigned char>(content[i]) == 0xE3 && 
-                                static_cast<unsigned char>(content[i+1]) == 0x80 && 
-                                static_cast<unsigned char>(content[i+2]) == 0x82) {
-                                delim_pos = i + 2;
-                                break;
-                            }
-                            // Check for ！ (EF BC 81)
-                            if (i + 2 < content.size() && 
-                                static_cast<unsigned char>(content[i]) == 0xEF && 
-                                static_cast<unsigned char>(content[i+1]) == 0xBC && 
-                                static_cast<unsigned char>(content[i+2]) == 0x81) {
-                                delim_pos = i + 2;
-                                break;
-                            }
-                            // Check for ？ (EF BC 9F)
-                            if (i + 2 < content.size() && 
-                                static_cast<unsigned char>(content[i]) == 0xEF && 
-                                static_cast<unsigned char>(content[i+1]) == 0xBC && 
-                                static_cast<unsigned char>(content[i+2]) == 0x9F) {
-                                delim_pos = i + 2;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (delim_pos == std::string::npos) {
-                        break;
-                    }
-
-                    std::string sentence = content.substr(m_raw_stream_processed_idx, delim_pos - m_raw_stream_processed_idx + 1);
-                    m_raw_stream_processed_idx = delim_pos + 1;
-
-                    sentence.erase(std::remove_if(sentence.begin(), sentence.end(), [](char c) {
-                        return c == '*' || c == '`' || c == '_' || c == '#';
-                    }), sentence.end());
-
-                    std::replace(sentence.begin(), sentence.end(), '\n', ' ');
-                    std::replace(sentence.begin(), sentence.end(), '\r', ' ');
-
-                    sentence.erase(0, sentence.find_first_not_of(" \t\r\n"));
-                    size_t last_idx = sentence.find_last_not_of(" \t\r\n");
-                    if (last_idx != std::string::npos) {
-                        sentence.erase(last_idx + 1);
-                    }
-
-                    if (!sentence.empty()) {
-#ifdef PROMPTSLUT_VOICE_MODE
-                        VoiceEngine::instance().tts()->speakSentence(sentence);
-#endif
-                    }
+            if (!m_is_actively_streaming_chunk) {
+                ChatBlock block;
+                block.role = "assistant";
+                block.content = content;
+                block.collapsed = false;
+                m_chat_history.push_back(block);
+                m_is_actively_streaming_chunk = true;
+            } else {
+                if (!m_chat_history.empty()) {
+                    m_chat_history.back().content += content;
                 }
             }
-
-            // Finish any active stream first (safety check)
-            if (m_streaming_timer && m_streaming_timer->isActive()) {
-                m_streaming_timer->stop();
-                while (m_current_token_index < m_tokens_to_stream.size()) {
-                    m_chat_history[m_streaming_history_index].content += m_tokens_to_stream[m_current_token_index];
-                    m_current_token_index++;
-                }
-            }
-
-            // Push an empty assistant block
-            ChatBlock block;
-            block.role = "assistant";
-            block.content = "";
-            m_chat_history.push_back(block);
-            
-            // Queue tokens and start the typewriter timer
-            m_tokens_to_stream = tokenize(content);
-            m_current_token_index = 0;
-            m_streaming_history_index = m_chat_history.size() - 1;
-            
-            if (!m_streaming_timer) {
-                m_streaming_timer = new QTimer(this);
-                connect(m_streaming_timer, &QTimer::timeout, this, &QtUiApp::streamNextToken);
-            }
-            m_streaming_timer->start(20); // 20ms per token - extremely smooth and natural typing speed
+            rebuildChatDisplay();
         });
     };
 
     auto on_error = [this](const std::string& err) {
         QMetaObject::invokeMethod(this, [this, err] {
+            m_is_actively_streaming_chunk = false;
+            m_is_actively_streaming_reasoning = false;
             ChatBlock block;
             block.role = "assistant";
             block.content = "Error: " + err;
@@ -744,17 +869,28 @@ void QtUiApp::handleSend() {
 
     auto on_reasoning = [this](const std::string& reasoning) {
         QMetaObject::invokeMethod(this, [this, reasoning] {
-            ChatBlock block;
-            block.role = "reasoning";
-            block.content = reasoning;
-            block.collapsed = true; // Reasoning collapsed by default!
-            m_chat_history.push_back(block);
+            if (reasoning.empty()) return;
+
+            if (!m_is_actively_streaming_reasoning) {
+                ChatBlock block;
+                block.role = "reasoning";
+                block.content = reasoning;
+                block.collapsed = true; // Reasoning collapsed by default!
+                m_chat_history.push_back(block);
+                m_is_actively_streaming_reasoning = true;
+            } else {
+                if (!m_chat_history.empty()) {
+                    m_chat_history.back().content += reasoning;
+                }
+            }
             rebuildChatDisplay();
         });
     };
 
     auto on_complete = [this, utf8_text](const std::vector<nlohmann::json>& updated_messages) {
         QMetaObject::invokeMethod(this, [this, updated_messages, utf8_text] {
+            m_is_actively_streaming_chunk = false;
+            m_is_actively_streaming_reasoning = false;
             m_conversation.clear();
             // Skip the system message at index 0
             for (size_t i = 1; i < updated_messages.size(); ++i) {
@@ -862,13 +998,20 @@ void QtUiApp::handleSend() {
     };
 
     // Update connection status label on send
-    m_stat_status->setText(QString("Endpoint: %1:%2").arg(QString::fromStdString(host)).arg(port));
+    if (port > 0) {
+        m_stat_status->setText(QString("Endpoint: %1:%2").arg(QString::fromStdString(host)).arg(port));
+    } else {
+        m_stat_status->setText(QString("Endpoint: %1").arg(QString::fromStdString(host)));
+    }
     m_stat_model->setText(QString("Active Model: %1").arg(QString::fromStdString(model)));
 
     m_worker->push_request(
         messages, host, port, api_key, model,
         on_stream, on_tool, on_error, on_reasoning,
-        nullptr, on_complete, on_stats
+        nullptr, on_complete, on_stats,
+        true, m_context_limit_val,
+        m_sessions[m_current_session_index].id,
+        m_max_tool_calls_val
     );
     
     updateStatus("Generating...");
@@ -1086,19 +1229,6 @@ void QtUiApp::handleAnchorClicked(const QUrl& url) {
     }
 }
 
-void QtUiApp::streamNextToken() {
-    if (m_current_token_index < m_tokens_to_stream.size()) {
-        std::string token = m_tokens_to_stream[m_current_token_index];
-        m_chat_history[m_streaming_history_index].content += token;
-        m_current_token_index++;
-        rebuildChatDisplay();
-    } else {
-        m_streaming_timer->stop();
-        saveCurrentSessionState();
-        updateStatus("Ready");
-    }
-}
-
 static nlohmann::json chat_block_to_json(const QtUiApp::ChatBlock& block) {
     nlohmann::json j;
     j["role"] = block.role;
@@ -1117,11 +1247,32 @@ static QtUiApp::ChatBlock chat_block_from_json(const nlohmann::json& j) {
     return block;
 }
 
+static nlohmann::json task_to_json(const QtUiApp::Task& task) {
+    nlohmann::json j;
+    j["id"] = task.id;
+    j["text"] = task.text;
+    j["is_completed"] = task.is_completed;
+    return j;
+}
+
+static QtUiApp::Task task_from_json(const nlohmann::json& j) {
+    QtUiApp::Task task;
+    task.id = j.value("id", "");
+    task.text = j.value("text", "");
+    task.is_completed = j.value("is_completed", false);
+    return task;
+}
+
 static nlohmann::json chat_session_to_json(const QtUiApp::ChatSession& session) {
     nlohmann::json j;
     j["id"] = session.id;
     j["title"] = session.title;
     j["memory_digest"] = session.memory_digest;
+    j["workspace_dir"] = session.workspace_dir;
+    j["tasks"] = nlohmann::json::array();
+    for (const auto& task : session.tasks) {
+        j["tasks"].push_back(task_to_json(task));
+    }
     j["chat_history"] = nlohmann::json::array();
     for (const auto& block : session.chat_history) {
         j["chat_history"].push_back(chat_block_to_json(block));
@@ -1138,6 +1289,12 @@ static QtUiApp::ChatSession chat_session_from_json(const nlohmann::json& j) {
     }
     session.title = j.value("title", "New Chat");
     session.memory_digest = j.value("memory_digest", "");
+    session.workspace_dir = j.value("workspace_dir", "");
+    if (j.contains("tasks") && j["tasks"].is_array()) {
+        for (const auto& tj : j["tasks"]) {
+            session.tasks.push_back(task_from_json(tj));
+        }
+    }
     if (j.contains("chat_history") && j["chat_history"].is_array()) {
         for (const auto& bj : j["chat_history"]) {
             session.chat_history.push_back(chat_block_from_json(bj));
@@ -1220,6 +1377,7 @@ void QtUiApp::saveCurrentSessionState() {
     if (m_current_session_index >= 0 && m_current_session_index < static_cast<int>(m_sessions.size())) {
         m_sessions[m_current_session_index].chat_history = m_chat_history;
         m_sessions[m_current_session_index].conversation = m_conversation;
+        m_sessions[m_current_session_index].workspace_dir = get_workspace_directory().string();
 
         // Auto-rename title if it is a default "New Chat" and we just started this session!
         if (m_sessions[m_current_session_index].title.rfind("New Chat", 0) == 0 && !m_chat_history.empty()) {
@@ -1276,7 +1434,8 @@ void QtUiApp::saveCurrentSessionState() {
                     });
                 },
                 nullptr, // on_stats
-                false    // include_tools
+                false,   // include_tools
+                m_context_limit_val
             );
         }
     }
@@ -1284,14 +1443,10 @@ void QtUiApp::saveCurrentSessionState() {
 }
 
 void QtUiApp::handleNewChat() {
-    // Finish any active stream first
-    if (m_streaming_timer && m_streaming_timer->isActive()) {
-        m_streaming_timer->stop();
-    }
-
     ChatSession session;
     session.id = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
     session.title = "New Chat " + std::to_string(m_sessions.size() + 1);
+    session.workspace_dir = get_workspace_directory().string();
     m_sessions.push_back(session);
     m_current_session_index = m_sessions.size() - 1;
 
@@ -1304,11 +1459,6 @@ void QtUiApp::handleDeleteSession(int row) {
 
     auto res = QMessageBox::question(this, "Delete Chat", "Are you sure you want to delete this chat?", QMessageBox::Yes | QMessageBox::No);
     if (res == QMessageBox::Yes) {
-        // Stop active streaming if any
-        if (m_streaming_timer && m_streaming_timer->isActive()) {
-            m_streaming_timer->stop();
-        }
-
         m_sessions.erase(m_sessions.begin() + row);
         
         // If all sessions deleted, create a fresh empty one
@@ -1332,21 +1482,101 @@ void QtUiApp::handleDeleteSession(int row) {
 }
 
 void QtUiApp::loadSession(int index) {
-    // Finish active streaming if any
-    if (m_streaming_timer && m_streaming_timer->isActive()) {
-        m_streaming_timer->stop();
-    }
-
     m_current_session_index = index;
     if (index == -1) {
         m_chat_history.clear();
         m_conversation.clear();
         m_chat_display->clear();
+        m_last_total_tokens = 0;
     } else {
         m_chat_history = m_sessions[index].chat_history;
         m_conversation = m_sessions[index].conversation;
         m_sidebar->setCurrentRow(index);
+
+        if (m_task_list_widget) {
+            m_task_list_widget->refreshTasks();
+        }
+
+        // Restore saved workspace directory for this session!
+        std::string ws = m_sessions[index].workspace_dir;
+        if (!ws.empty()) {
+            set_workspace_directory(std::filesystem::path(ws));
+        } else {
+            // Default it to the app's parent path to avoid leak of previous session's directory
+            wchar_t exe_path[MAX_PATH];
+            GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+            set_workspace_directory(std::filesystem::path(exe_path).parent_path());
+        }
+        updateWorkspaceLabel(); // Updates UI label and ProjectWatcher directory recursively!
+
         rebuildChatDisplay();
+
+        // Calculate and update context stats immediately upon session switch!
+        size_t total_chars = 0;
+        for (const auto& msg : m_conversation) {
+            if (msg.contains("content")) {
+                if (msg["content"].is_string()) {
+                    total_chars += msg["content"].get<std::string>().length();
+                } else if (msg["content"].is_array()) {
+                    total_chars += msg["content"].dump().length();
+                }
+            }
+        }
+        int estimated_tokens = static_cast<int>(static_cast<double>(total_chars) / 3.5);
+        m_last_total_tokens = estimated_tokens;
+
+        int context_limit = m_context_limit_val;
+        double pct_used = (context_limit > 0) ? ((static_cast<double>(estimated_tokens) / context_limit) * 100.0) : 0.0;
+        
+        m_stat_context_used->setText(QString("Context Used: %1 / %2 (%3%)")
+                                     .arg(QString::number(estimated_tokens))
+                                     .arg(QString::number(context_limit))
+                                     .arg(QString::number(pct_used, 'f', 1)));
+    }
+}
+
+void QtUiApp::handleTaskUpdate(const QString& session_id, const QString& action, const QString& data) {
+    std::string target_sid = session_id.toStdString();
+    std::string act = action.toStdString();
+    std::string raw_data = data.toStdString();
+
+    int target_idx = -1;
+    for (size_t i = 0; i < m_sessions.size(); ++i) {
+        if (m_sessions[i].id == target_sid) {
+            target_idx = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (target_idx == -1) return;
+
+    auto& session = m_sessions[target_idx];
+
+    if (act == "add") {
+        try {
+            auto j = nlohmann::json::parse(raw_data);
+            Task task = task_from_json(j);
+            session.tasks.push_back(task);
+        } catch (...) {}
+    } else if (act == "complete") {
+        for (auto& task : session.tasks) {
+            if (task.id == raw_data) {
+                task.is_completed = true;
+                break;
+            }
+        }
+    } else if (act == "remove") {
+        for (auto it = session.tasks.begin(); it != session.tasks.end(); ++it) {
+            if (it->id == raw_data) {
+                session.tasks.erase(it);
+                break;
+            }
+        }
+    }
+
+    saveCurrentSessionState();
+    if (m_current_session_index == target_idx && m_task_list_widget) {
+        m_task_list_widget->refreshTasks();
     }
 }
 
@@ -1447,6 +1677,27 @@ void QtUiApp::updateWorkspaceLabel() {
     m_stat_workspace->setText(QString("Workspace: %1").arg(QString::fromStdString(ws_path)));
     if (m_project_watcher) {
         m_project_watcher->setWorkingDirectory(QString::fromStdString(ws_path));
+    }
+}
+
+void QtUiApp::updateAgentModeUI() {
+    if (!m_chatbot_label || !m_coder_label || !m_planner_label || !m_input_field) return;
+
+    if (m_active_mode == AgentMode::Chatbot) {
+        m_chatbot_label->setStyleSheet("font-size: 11px; font-weight: bold; color: #00FF66;");
+        m_coder_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_planner_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_input_field->setStyleSheet("QTextEdit#input_field { background-color: #1e1e1e; border: 2px solid #00FF66; border-radius: 6px; color: #d4d4d4; font-size: 14px; padding: 10px; }");
+    } else if (m_active_mode == AgentMode::Coder) {
+        m_chatbot_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_coder_label->setStyleSheet("font-size: 11px; font-weight: bold; color: #00F0FF;");
+        m_planner_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_input_field->setStyleSheet("QTextEdit#input_field { background-color: #1e1e1e; border: 2px solid #00F0FF; border-radius: 6px; color: #d4d4d4; font-size: 14px; padding: 10px; }");
+    } else if (m_active_mode == AgentMode::Planner) {
+        m_chatbot_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_coder_label->setStyleSheet("font-size: 11px; color: #555;");
+        m_planner_label->setStyleSheet("font-size: 11px; font-weight: bold; color: #BD00FF;");
+        m_input_field->setStyleSheet("QTextEdit#input_field { background-color: #1e1e1e; border: 2px solid #BD00FF; border-radius: 6px; color: #d4d4d4; font-size: 14px; padding: 10px; }");
     }
 }
 
@@ -1561,7 +1812,8 @@ void QtUiApp::triggerContextConsolidationAndTrimming() {
             });
         },
         nullptr, // on_stats
-        false    // include_tools
+        false,   // include_tools
+        m_context_limit_val
     );
 }
 
@@ -1579,12 +1831,21 @@ void QtUiApp::queryActiveModel() {
 
     std::thread([this, host, port]() {
         try {
-            httplib::Client client("http://" + host + ":" + std::to_string(port));
+            std::string target_url = (host.rfind("http", 0) == 0) ? host : "http://" + host;
+            if (port > 0 && host.find("http") == std::string::npos) {
+                target_url += ":" + std::to_string(port);
+            }
+            httplib::Client client(target_url);
+            client.enable_server_certificate_verification(false);
             client.set_connection_timeout(1000); // 1-second timeout
             client.set_read_timeout(2000);
             
+            httplib::Headers headers = {
+                {"ngrok-skip-browser-warning", "69420"}
+            };
+
             // 1. Query props to get active context window size (n_ctx)
-            auto res_props = client.Get("/props");
+            auto res_props = client.Get("/props", headers);
             if (res_props && res_props->status == 200) {
                 try {
                     auto j_props = nlohmann::json::parse(res_props->body);
@@ -1600,7 +1861,7 @@ void QtUiApp::queryActiveModel() {
             }
 
             // 2. Query models to get active model name
-            auto res = client.Get("/v1/models");
+            auto res = client.Get("/v1/models", headers);
             if (res && res->status == 200) {
                 auto j = nlohmann::json::parse(res->body);
                 if (j.contains("data") && j["data"].is_array() && !j["data"].empty()) {
@@ -1727,7 +1988,8 @@ void QtUiApp::consolidateMemoryProfile(const std::string& user_prompt, const std
             });
         },
         nullptr, // on_stats
-        false    // include_tools
+        false,   // include_tools
+        m_context_limit_val
     );
 }
 
@@ -1741,6 +2003,18 @@ bool QtUiApp::eventFilter(QObject* obj, QEvent* event) {
     if (obj == m_input_field || obj == m_chat_display) {
         if (event->type() == QEvent::KeyPress && obj == m_input_field) {
             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Tab && (keyEvent->modifiers() & Qt::ControlModifier)) {
+                // Cycle Agent Mode on Ctrl + Tab
+                if (m_active_mode == AgentMode::Chatbot) {
+                    m_active_mode = AgentMode::Coder;
+                } else if (m_active_mode == AgentMode::Coder) {
+                    m_active_mode = AgentMode::Planner;
+                } else {
+                    m_active_mode = AgentMode::Chatbot;
+                }
+                updateAgentModeUI();
+                return true;
+            }
             if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
                 if (keyEvent->modifiers() & Qt::ShiftModifier) {
                     // Let Shift+Enter insert a newline natively
@@ -1927,7 +2201,8 @@ void QtUiApp::dropEvent(QDropEvent* event) {
                         });
                     },
                     nullptr, // on_stats
-                    false    // include_tools (no tools schema!)
+                    false,   // include_tools (no tools schema!)
+                    m_context_limit_val
                 );
             } else {
                 appendMessage("[⚠️ Error: Failed to open file " + file_name.toStdString() + "]", false);
@@ -2014,10 +2289,9 @@ void QtUiApp::handleVoiceToggle(bool checked) {
 void QtUiApp::handleHandsfreeToggle(bool checked) {
     m_handsfree_enabled = checked;
     
-    QNetworkAccessManager* manager = new QNetworkAccessManager(this);
     QUrl url(QString("http://127.0.0.1:5001/v1/audio/wakeword?enabled=%1").arg(m_handsfree_enabled ? "true" : "false"));
     QNetworkRequest request(url);
-    manager->post(request, QByteArray());
+    m_network_manager->post(request, QByteArray());
     
     if (m_handsfree_enabled) {
         updateStatus("Listening for Wake Word...");
@@ -2035,14 +2309,20 @@ void QtUiApp::handleHandsfreeToggle(bool checked) {
 }
 
 void QtUiApp::pollHandsfreeBuffer() {
-    if (!m_handsfree_enabled) return;
+    bool has_pending_images = false;
+    for (const auto& block : m_chat_history) {
+        if (block.content.find("[PENDING_IMAGE_ID:") != std::string::npos) {
+            has_pending_images = true;
+            break;
+        }
+    }
+    if (!m_handsfree_enabled && !has_pending_images) return;
     
-    QNetworkAccessManager* manager = new QNetworkAccessManager(this);
     QUrl url("http://127.0.0.1:5001/v1/audio/transcription-buffer");
     QNetworkRequest request(url);
     
-    QNetworkReply* reply = manager->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, manager]() {
+    QNetworkReply* reply = m_network_manager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray data = reply->readAll();
             QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -2058,7 +2338,6 @@ void QtUiApp::pollHandsfreeBuffer() {
                         }
                         updateStatus(sys_status.toStdString());
                         reply->deleteLater();
-                        manager->deleteLater();
                         return; // Bypass normal listening styling while downloading
                     }
                 }
@@ -2107,7 +2386,6 @@ void QtUiApp::pollHandsfreeBuffer() {
             }
         }
         reply->deleteLater();
-        manager->deleteLater();
     });
 }
 

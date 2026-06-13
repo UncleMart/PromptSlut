@@ -32,11 +32,12 @@ public:
 
     // Streaming version — calls on_chunk with each SSE fragment.
     // Returns when [DONE] is received or on error.
-    void chat_completion_stream(
+    nlohmann::json chat_completion_stream(
         const std::vector<nlohmann::json>& messages,
         const std::vector<nlohmann::json>& tools,
         const std::string& model,
         std::function<void(const std::string& chunk)> on_chunk,
+        std::function<void(const std::string& reasoning_chunk)> on_reasoning,
         const nlohmann::json& response_format = {});
 
 private:

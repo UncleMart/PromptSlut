@@ -339,6 +339,69 @@ public:
     }
 };
 
+// Forward declaration
+class Worker;
+
+class AddTaskTool : public Tool
+{
+private:
+    Worker* m_worker;
+public:
+    explicit AddTaskTool(Worker* worker) : m_worker(worker) {}
+    std::string name() const override { return "add_task"; }
+    std::string description() const override { return "Add a new task to the user's to-do list."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"text", {{"type", "string"}, {"description", "The description/text of the task to add"}}}
+            }},
+            {"required", {"text"}}
+        };
+    }
+};
+
+class CompleteTaskTool : public Tool
+{
+private:
+    Worker* m_worker;
+public:
+    explicit CompleteTaskTool(Worker* worker) : m_worker(worker) {}
+    std::string name() const override { return "complete_task"; }
+    std::string description() const override { return "Mark a task on the user's to-do list as completed using its unique task ID."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"id", {{"type", "string"}, {"description", "The unique ID (UUID) of the task to complete"}}}
+            }},
+            {"required", {"id"}}
+        };
+    }
+};
+
+class RemoveTaskTool : public Tool
+{
+private:
+    Worker* m_worker;
+public:
+    explicit RemoveTaskTool(Worker* worker) : m_worker(worker) {}
+    std::string name() const override { return "remove_task"; }
+    std::string description() const override { return "Remove/delete a task from the user's to-do list using its unique task ID."; }
+    std::string execute(const json& arguments) override;
+    json schema() override {
+        return {
+            {"type", "object"},
+            {"properties", {
+                {"id", {{"type", "string"}, {"description", "The unique ID (UUID) of the task to delete/remove"}}}
+            }},
+            {"required", {"id"}}
+        };
+    }
+};
+
 // Workspace directory helpers
 void set_workspace_directory(const std::filesystem::path& path);
 std::filesystem::path get_workspace_directory();

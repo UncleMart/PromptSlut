@@ -1,6 +1,8 @@
 #ifndef WORKER_H
 #define WORKER_H
 
+#include <QObject>
+#include <QString>
 #include <string>
 #include <vector>
 #include <memory>
@@ -36,6 +38,9 @@ struct Request
     int port = 8080;
     std::string api_key;
     std::string model;
+    int context_limit = 32000;
+    int max_tool_calls = 20;
+    std::string session_id;
     std::function<void(const std::string& err)> on_error;
     std::function<void(const std::string& chunk)> on_stream_chunk;
     std::function<void(const std::string& tool_name, const std::string& result)> on_tool_result;
@@ -45,11 +50,12 @@ struct Request
     std::function<void(double elapsed, int prompt_t, int completion_t, int total_t)> on_stats;
 };
 
-class Worker
+class Worker : public QObject
 {
+    Q_OBJECT
 public:
-    Worker();
-    ~Worker();
+    explicit Worker(QObject* parent = nullptr);
+    ~Worker() override;
 
     void set_tool_registry(const std::vector<nlohmann::json>& tool_defs);
     void register_tool(std::shared_ptr<Tool> tool);
@@ -67,10 +73,19 @@ public:
         std::function<void(const std::string& tool_name, const std::string& call_id)> on_tool_started = nullptr,
         std::function<void(const std::vector<nlohmann::json>&)> on_complete = nullptr,
         std::function<void(double elapsed, int prompt_t, int completion_t, int total_t)> on_stats = nullptr,
-        bool include_tools = true);
+        bool include_tools = true,
+        int context_limit = 32000,
+        const std::string& session_id = "",
+        int max_tool_calls = 20);
 
     void set_stop();
     void stop() { stop_current_request_ = true; }
+
+    std::string current_session_id() const { return current_session_id_; }
+    void emit_task_update(const std::string& action, const std::string& data);
+
+signals:
+    void request_task_update(const QString& session_id, const QString& action, const QString& data);
 
 private:
     void worker_loop();
@@ -84,6 +99,7 @@ private:
     std::atomic<bool> stop_current_request_{false};
     std::vector<nlohmann::json> tool_defs_;
     ToolRegistry tool_registry_;
+    std::string current_session_id_;
 };
 
 #endif // WORKER_H

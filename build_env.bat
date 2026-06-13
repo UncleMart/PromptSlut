@@ -3,9 +3,13 @@ cd /d "%~dp0"
 
 echo [Backup] Backing up configuration and memory files if present...
 if not exist temp_backup mkdir temp_backup
-if exist build\bin\promptslut.profile copy build\bin\promptslut.profile temp_backup\ /y >nul
-if exist build\bin\promptslut.key copy build\bin\promptslut.key temp_backup\ /y >nul
-if exist build\bin\promptslut.dict copy build\bin\promptslut.dict temp_backup\ /y >nul
+if exist build\bin\*.profile copy build\bin\*.profile temp_backup\ /y >nul
+if exist build\bin\*.key copy build\bin\*.key temp_backup\ /y >nul
+if exist build\bin\*.dict copy build\bin\*.dict temp_backup\ /y >nul
+if exist build\bin\*.prompt copy build\bin\*.prompt temp_backup\ /y >nul
+if exist build\bin\system_prompt*.txt copy build\bin\system_prompt*.txt temp_backup\ /y >nul
+if exist build\bin\sessions xcopy build\bin\sessions temp_backup\sessions\ /e /y /i >nul
+if exist build\bin\memory xcopy build\bin\memory temp_backup\memory\ /e /y /i >nul
 
 if exist build rmdir /s /q build
 
@@ -53,9 +57,13 @@ echo.
 echo Build complete. Executable in build\bin\
 
 echo [Restore] Restoring configuration and memory files from backup...
-if exist temp_backup\promptslut.profile copy temp_backup\promptslut.profile build\bin\ /y >nul
-if exist temp_backup\promptslut.key copy temp_backup\promptslut.key build\bin\ /y >nul
-if exist temp_backup\promptslut.dict copy temp_backup\promptslut.dict build\bin\ /y >nul
+if exist temp_backup\*.profile copy temp_backup\*.profile build\bin\ /y >nul
+if exist temp_backup\*.key copy temp_backup\*.key build\bin\ /y >nul
+if exist temp_backup\*.dict copy temp_backup\*.dict build\bin\ /y >nul
+if exist temp_backup\*.prompt copy temp_backup\*.prompt build\bin\ /y >nul
+if exist temp_backup\system_prompt*.txt copy temp_backup\system_prompt*.txt build\bin\ /y >nul
+if exist temp_backup\sessions xcopy temp_backup\sessions build\bin\sessions\ /e /y /i >nul
+if exist temp_backup\memory xcopy temp_backup\memory build\bin\memory\ /e /y /i >nul
 if exist temp_backup rmdir /s /q temp_backup
 
 pause

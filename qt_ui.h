@@ -2,6 +2,7 @@
 #define QT_UI_H
 
 #include <QMainWindow>
+#include <QNetworkAccessManager>
 #include "ChronosEngine.h"
 #include "ProjectWatcher.h"
 #include <QWidget>
@@ -181,8 +182,30 @@ private:
     }
 };
 
+class TaskListWidget : public QFrame {
+    Q_OBJECT
+public:
+    explicit TaskListWidget(class QtUiApp* parent);
+    void refreshTasks();
+
+private slots:
+    void toggleCollapsed();
+
+private:
+    class QtUiApp* m_parent;
+    class QPushButton* m_header_btn;
+    class QWidget* m_content_container;
+    class QListWidget* m_list_widget;
+    bool m_is_collapsed = true;
+    int m_completed_count = 0;
+    int m_total_count = 0;
+};
+
+enum class AgentMode { Chatbot, Coder, Planner };
+
 class QtUiApp : public QMainWindow {
     Q_OBJECT
+    friend class TaskListWidget;
 
 public:
     static QtUiApp* s_instance;
@@ -202,7 +225,6 @@ private slots:
     void toggleLeftPane();
     void toggleRightPane();
     void handleAnchorClicked(const QUrl& url);
-    void streamNextToken();
     void handleNewChat();
     void handleDeleteSession(int row);
     void loadSession(int index);
@@ -215,6 +237,7 @@ private slots:
     void handleTranscriptionReady(const QString& text);
     void handleChronosEvent(const ChronosTask& task);
     void handleFileChangedOrDiscovered(const QString &filePath, const QString &content);
+    void handleTaskUpdate(const QString& session_id, const QString& action, const QString& data);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -224,17 +247,18 @@ protected:
 private:
     void setupLayout();
     void applyStyles();
-    void rebuildChatDisplay();
     void saveCurrentSessionState();
     void save_all_sessions_to_disk();
     void load_all_sessions_from_disk();
-    void updateWorkspaceLabel();
     void triggerContextConsolidationAndTrimming();
 
 private:
     bool m_is_consolidating = false;
 
 public:
+    void updateWorkspaceLabel();
+    void rebuildChatDisplay();
+    void updateAgentModeUI();
     struct ChatBlock {
         std::string role; // "user", "assistant", "reasoning", "tool"
         std::string content;
@@ -242,26 +266,46 @@ public:
         bool collapsed = true;
     };
 
+    struct Task {
+        std::string id;
+        std::string text;
+        bool is_completed = false;
+    };
+
     struct ChatSession {
         std::string id;
         std::string title;
         std::string memory_digest;
+        std::string workspace_dir;
+        std::vector<Task> tasks;
         std::vector<ChatBlock> chat_history;
         std::vector<nlohmann::json> conversation;
     };
 
-private:
     std::vector<ChatBlock> m_chat_history;
+
+private:
     std::vector<ChatSession> m_sessions;
     int m_current_session_index = -1;
 
     // Token streaming variables
-    QTimer* m_streaming_timer = nullptr;
-    std::vector<std::string> m_tokens_to_stream;
-    size_t m_current_token_index = 0;
-    size_t m_streaming_history_index = 0;
+    bool m_is_actively_streaming_chunk = false;
+    bool m_is_actively_streaming_reasoning = false;
 
-    Worker* m_worker;
+    // Agent Mode States & Prompts
+    AgentMode m_active_mode = AgentMode::Chatbot;
+    std::string m_prompt_chatbot;
+    std::string m_prompt_coder;
+    std::string m_prompt_planner;
+
+    // HUD Strip layout components
+    QWidget* m_hud_strip_widget = nullptr;
+    QLabel* m_chatbot_label = nullptr;
+    QLabel* m_coder_label = nullptr;
+    QLabel* m_planner_label = nullptr;
+
+     Worker* m_worker;
+     QNetworkAccessManager* m_network_manager = nullptr;
 
     // Layout components
     QSplitter* m_splitter;
@@ -271,6 +315,7 @@ private:
     QPushButton* m_sidebar_settings_btn;
     QWidget* m_chat_container;
     QTextBrowser* m_chat_display;
+    TaskListWidget* m_task_list_widget = nullptr;
     QTextEdit* m_input_field;
     QPushButton* m_send_btn;
     QPushButton* m_stop_btn;
@@ -317,6 +362,7 @@ public:
     std::string m_model_val;
     bool m_matrix_rain_enabled = true;
     int m_rain_theme_idx = 0;
+    int m_max_tool_calls_val = 20;
     MatrixRainWidget* m_matrix_widget = nullptr;
 
     // Voice Mode & LLM-Stream-synchronized TTS extraction state
@@ -383,7 +429,7 @@ public:
     SettingsDialog(QtUiApp* parent) : QDialog(parent), m_parent(parent) {
         setWindowFlags(Qt::Popup | Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground);
-        setFixedSize(500, 520);
+        setFixedSize(500, 550);
 
         QVBoxLayout* main_layout = new QVBoxLayout(this);
         main_layout->setContentsMargins(0, 0, 0, 0);
@@ -432,19 +478,21 @@ public:
         form->setHorizontalSpacing(15);
 
         m_host_input = new QLineEdit(QString::fromStdString(m_parent->m_host_val), bg_frame);
-        m_port_input = new QLineEdit(QString::number(m_parent->m_port_val), bg_frame);
+        m_port_input = new QLineEdit(m_parent->m_port_val > 0 ? QString::number(m_parent->m_port_val) : "", bg_frame);
         m_apikey_input = new QLineEdit(QString::fromStdString(m_parent->m_apikey_val), bg_frame);
         m_apikey_input->setEchoMode(QLineEdit::Password);
         m_serper_input = new QLineEdit(QString::fromStdString(m_parent->m_serper_val), bg_frame);
         m_serper_input->setEchoMode(QLineEdit::Password);
         m_serper_input->setPlaceholderText("Enter Serper.dev Key");
         m_model_input = new QLineEdit(QString::fromStdString(m_parent->m_model_val), bg_frame);
+        m_max_tool_calls_input = new QLineEdit(QString::number(m_parent->m_max_tool_calls_val), bg_frame);
 
         form->addRow("LLM API Host:", m_host_input);
         form->addRow("LLM API Port:", m_port_input);
         form->addRow("LLM API Key:", m_apikey_input);
         form->addRow("Serper API Key:", m_serper_input);
         form->addRow("Model Name:", m_model_input);
+        form->addRow("Max Tool Calls:", m_max_tool_calls_input);
 
         // Rain Theme ComboBox Selection
         m_theme_combo = new QComboBox(bg_frame);
@@ -462,7 +510,7 @@ public:
         form->addRow("", m_sec_model_toggle);
 
         m_sec_host_input = new QLineEdit(QString::fromStdString(m_parent->m_sec_host_val), bg_frame);
-        m_sec_port_input = new QLineEdit(QString::number(m_parent->m_sec_port_val), bg_frame);
+        m_sec_port_input = new QLineEdit(m_parent->m_sec_port_val > 0 ? QString::number(m_parent->m_sec_port_val) : "", bg_frame);
         m_sec_apikey_input = new QLineEdit(QString::fromStdString(m_parent->m_sec_apikey_val), bg_frame);
         m_sec_apikey_input->setEchoMode(QLineEdit::Password);
         m_sec_model_input = new QLineEdit(QString::fromStdString(m_parent->m_sec_model_val), bg_frame);
@@ -533,6 +581,7 @@ public:
         connect(m_apikey_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
         connect(m_serper_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
         connect(m_model_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
+        connect(m_max_tool_calls_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
         connect(m_sec_model_toggle, &QCheckBox::toggled, this, &SettingsDialog::saveSettings);
         connect(m_sec_host_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
         connect(m_sec_port_input, &QLineEdit::editingFinished, this, &SettingsDialog::saveSettings);
@@ -556,6 +605,8 @@ private slots:
         m_parent->m_apikey_val = m_apikey_input->text().toStdString();
         m_parent->m_serper_val = m_serper_input->text().toStdString();
         m_parent->m_model_val = m_model_input->text().trimmed().toStdString();
+        m_parent->m_max_tool_calls_val = m_max_tool_calls_input->text().trimmed().toInt();
+        if (m_parent->m_max_tool_calls_val <= 0) m_parent->m_max_tool_calls_val = 20;
         m_parent->m_matrix_rain_enabled = m_matrix_toggle->isChecked();
         m_parent->m_rain_theme_idx = m_theme_combo->currentIndex();
 
@@ -601,7 +652,8 @@ private slots:
             m_parent->m_sec_model_val,
             m_parent->m_rain_theme_idx,
             m_parent->m_voice_mode_enabled,
-            m_parent->m_tts_voice_val
+            m_parent->m_tts_voice_val,
+            m_parent->m_max_tool_calls_val
         );
     }
 
@@ -612,6 +664,7 @@ private:
     QLineEdit* m_apikey_input;
     QLineEdit* m_serper_input;
     QLineEdit* m_model_input;
+    QLineEdit* m_max_tool_calls_input;
     QCheckBox* m_sec_model_toggle;
     QLineEdit* m_sec_host_input;
     QLineEdit* m_sec_port_input;

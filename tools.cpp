@@ -1,4 +1,5 @@
 #include "tools.h"
+#include "worker.h"
 #include "convert.h"
 #include "keyfile.h"
 #include "httplib.h"
@@ -355,8 +356,11 @@ std::string ShellTool::execute(const nlohmann::json& args) {
         return "Error: failed to set handle info";
     }
 
+    HANDLE hNul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &saAttr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdInput = (hNul != INVALID_HANDLE_VALUE) ? hNul : NULL;
     si.hStdOutput = hChildStd_OUT_Wr;
     si.hStdError = hChildStd_OUT_Wr;
     si.wShowWindow = SW_HIDE;
@@ -364,23 +368,63 @@ std::string ShellTool::execute(const nlohmann::json& args) {
     PROCESS_INFORMATION pi = {};
 
     if (!CreateProcessW(nullptr, &wcmd[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        if (hNul != INVALID_HANDLE_VALUE) CloseHandle(hNul);
         CloseHandle(hChildStd_OUT_Rd);
         CloseHandle(hChildStd_OUT_Wr);
         return "Error: failed to execute command";
     }
 
+    if (hNul != INVALID_HANDLE_VALUE) {
+        CloseHandle(hNul);
+    }
     CloseHandle(hChildStd_OUT_Wr);
 
     std::string output;
     char buf[4096];
     DWORD dwRead;
-    while (ReadFile(hChildStd_OUT_Rd, buf, sizeof(buf) - 1, &dwRead, NULL) && dwRead > 0) {
-        buf[dwRead] = '\0';
-        output += buf;
+    DWORD dwAvail = 0;
+
+    auto start_time = std::chrono::steady_clock::now();
+    const DWORD timeout_ms = 300000; // 300 seconds timeout (5 minutes for long builds)
+    bool timed_out = false;
+
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_time).count();
+        if (elapsed > timeout_ms) {
+            timed_out = true;
+            break;
+        }
+
+        if (PeekNamedPipe(hChildStd_OUT_Rd, NULL, 0, NULL, &dwAvail, NULL) && dwAvail > 0) {
+            DWORD to_read = (dwAvail < sizeof(buf) - 1) ? dwAvail : (sizeof(buf) - 1);
+            if (ReadFile(hChildStd_OUT_Rd, buf, to_read, &dwRead, NULL) && dwRead > 0) {
+                buf[dwRead] = '\0';
+                output += buf;
+            }
+        } else {
+            DWORD exit_status;
+            if (GetExitCodeProcess(pi.hProcess, &exit_status) && exit_status != STILL_ACTIVE) {
+                if (PeekNamedPipe(hChildStd_OUT_Rd, NULL, 0, NULL, &dwAvail, NULL) && dwAvail > 0) {
+                    DWORD to_read = (dwAvail < sizeof(buf) - 1) ? dwAvail : (sizeof(buf) - 1);
+                    if (ReadFile(hChildStd_OUT_Rd, buf, to_read, &dwRead, NULL) && dwRead > 0) {
+                        buf[dwRead] = '\0';
+                        output += buf;
+                    }
+                }
+                break;
+            }
+            Sleep(50);
+        }
     }
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD exit_code;
+    if (timed_out) {
+        TerminateProcess(pi.hProcess, 1);
+        if (!output.empty() && output.back() != '\n') output += "\n";
+        output += "\n[Error: Command timed out after " + std::to_string(timeout_ms / 1000) + " seconds. Process terminated.]";
+    }
+
+    DWORD exit_code = 0;
     GetExitCodeProcess(pi.hProcess, &exit_code);
 
     CloseHandle(pi.hProcess);
@@ -1192,4 +1236,63 @@ std::string CancelReminderTool::execute(const json& arguments) {
     }
 
     return "Error: Chronos Engine is not active.";
+}
+
+#include <random>
+
+static std::string generate_task_uuid() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    const char* hex = "0123456789abcdef";
+    std::string uuid = "task_";
+    for (int i = 0; i < 16; ++i) {
+        uuid += hex[dis(gen)];
+    }
+    return uuid;
+}
+
+std::string AddTaskTool::execute(const json& arguments) {
+    if (!arguments.contains("text") || !arguments["text"].is_string()) {
+        return "Error: missing 'text' parameter.";
+    }
+    std::string text = arguments["text"].get<std::string>();
+    std::string uuid = generate_task_uuid();
+
+    nlohmann::json task_json;
+    task_json["id"] = uuid;
+    task_json["text"] = text;
+    task_json["is_completed"] = false;
+
+    if (m_worker) {
+        m_worker->emit_task_update("add", task_json.dump());
+        return "Success: Task added with ID: " + uuid;
+    }
+    return "Error: Worker is not active.";
+}
+
+std::string CompleteTaskTool::execute(const json& arguments) {
+    if (!arguments.contains("id") || !arguments["id"].is_string()) {
+        return "Error: missing 'id' parameter.";
+    }
+    std::string id = arguments["id"].get<std::string>();
+
+    if (m_worker) {
+        m_worker->emit_task_update("complete", id);
+        return "Success: Task completed with ID: " + id;
+    }
+    return "Error: Worker is not active.";
+}
+
+std::string RemoveTaskTool::execute(const json& arguments) {
+    if (!arguments.contains("id") || !arguments["id"].is_string()) {
+        return "Error: missing 'id' parameter.";
+    }
+    std::string id = arguments["id"].get<std::string>();
+
+    if (m_worker) {
+        m_worker->emit_task_update("remove", id);
+        return "Success: Task removed with ID: " + id;
+    }
+    return "Error: Worker is not active.";
 }
