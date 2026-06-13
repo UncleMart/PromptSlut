@@ -47,6 +47,8 @@ voice_debug.log
 *.profile
 *.key
 sessions/
+gemgem.*
+buildtips.*
 
 # ==========================================
 # Android Gradle & Android Studio Ignored Files
